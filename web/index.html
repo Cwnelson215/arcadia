@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>arcadia — Stage 1</title>
+  <style>
+    body { margin: 0; background: #111; color: #eee;
+           font: 14px system-ui, -apple-system, sans-serif; }
+    #wrap { display: flex; flex-direction: column; align-items: center;
+            gap: 12px; padding: 16px; }
+    h2 { margin: 4px 0; font-weight: 600; }
+    video { background: #000; width: 1280px; max-width: 100%; aspect-ratio: 16 / 9; }
+    #bar { display: flex; gap: 12px; align-items: center; }
+    button { padding: 8px 16px; font-size: 14px; cursor: pointer; }
+    button:disabled { cursor: default; opacity: 0.5; }
+    #stats { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+             white-space: pre; background: #1b1b1b; padding: 10px 14px;
+             border-radius: 6px; min-width: 320px; }
+    .dot { display: inline-block; width: 10px; height: 10px;
+           border-radius: 50%; background: #888; }
+    .dot.on { background: #3c3; }
+    .dot.err { background: #c33; }
+  </style>
+</head>
+<body>
+  <div id="wrap">
+    <h2>arcadia — Stage 1 (one-way video)</h2>
+    <div id="bar">
+      <button id="connect">Connect</button>
+      <span class="dot" id="state"></span>
+      <span id="statetext">idle</span>
+    </div>
+    <video id="video" autoplay playsinline muted></video>
+    <div id="stats">no stats yet — click Connect</div>
+  </div>
+  <script src="main.js"></script>
+</body>
+</html>

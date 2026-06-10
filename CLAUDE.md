@@ -18,10 +18,60 @@ in [`ROADMAP.md`](./ROADMAP.md) — **read it first**.
 
 ## Current status
 
-**Stage 0 (prove the hardware) — not started.** No application code yet; this is
-a fresh scaffold (README, roadmap, this file). The build toolkit
-(GStreamer vs Pion vs aiortc) is **not yet chosen** — do not write pipeline code
-against a specific toolkit until that decision is made.
+**Build toolkit — DECIDED (2026-06-10): GStreamer (`webrtcbin`) + Rust
+(`gstreamer-rs`).** All pipeline code lives in `src/` (a Cargo binary). Do not
+reintroduce Pion/aiortc.
+
+**Stage 1 (one-way video) — DONE (2026-06-10).** Working end-to-end on bulbasaur:
+capture → VA-API H.264 → WebRTC → browser, verified at 1280×720@60 with ~30–40 ms
+network RTT, for both `--source test` (videotestsrc) and `--source x11`
+(ximagesrc on a headless Xvfb display showing glxgears). Architecture:
+- One Rust binary serves the static `web/` client, runs a `/ws` WebSocket
+  signaling endpoint (axum), and builds the GStreamer pipeline. bulbasaur is the
+  WebRTC **offerer**; the browser is a zero-install answerer. See `src/main.rs`,
+  `src/signaling.rs`, `src/pipeline.rs`; client in `web/`.
+- Pipeline: `<source> ! videoconvert ! NV12 ! vah264enc rate-control=cbr
+  bitrate=15000 key-int-max=30 b-frames=0 ! constrained-baseline ! h264parse !
+  rtph264pay config-interval=-1 mtu=1200 ! webrtcbin`.
+- Dev loop: edit on workstation → `scripts/sync.sh` (tar-over-ssh; **bulbasaur
+  has no `rsync`**) → `cargo run` on bulbasaur. Encode+capture are host-specific;
+  never validate on the workstation.
+
+**⚠️ The Stage-1 gotcha that cost the most time — Tailscale MTU.** `tailscale0`
+has a **1280-byte MTU**, but `rtph264pay` defaults to `mtu=1400`. Large keyframe
+(IDR) RTP packets then exceed the path MTU, get IP-fragmented over WireGuard, and
+lose fragments — so the browser receives bytes and small P-frames but **never
+reassembles a keyframe** (symptom: `connectionState=connected`, `bytesReceived>0`,
+but `keyFramesDecoded=0` and a permanently black `<video>`). Fix: **`rtph264pay
+mtu=1200`**. This will apply to every WebRTC-over-Tailscale stream in this project.
+
+**Stage 0 (prove the hardware) — DONE (2026-06-10).** Verified with
+`scripts/stage0-check.sh`: render node present, `amdgpu` bound, VA-API encode
+entrypoints (H.264 Constrained Baseline/Main/High + HEVC Main/Main10,
+`VAEntrypointEncSlice` via `radeonsi`), a working ffmpeg `h264_vaapi` encode, and
+`/dev/uinput` present.
+
+**Host toolchain installed for Stage 1 (Debian, via apt):**
+`build-essential`, `rustup` (stable; the toolchain had to be reinstalled once —
+a half-installed stable was missing its manifest), the GStreamer dev + runtime
+stack (`libgstreamer1.0-dev`, `-plugins-base/-bad` dev, `gstreamer1.0-plugins-
+base/good/bad`, **`gstreamer1.0-nice`** = libnice for webrtcbin ICE,
+`gstreamer1.0-tools`), and `xvfb`/`xterm`/`mesa-utils` for `--source x11`.
+GStreamer is **1.26.2**; the `va` plugin element is `vah264enc` (not
+`vah264lpenc`), with props `rate-control`/`bitrate`(kbps)/`key-int-max`/
+`b-frames`. Sudo over SSH needs a password (not passwordless).
+
+**Stage 0 remediation done on bulbasaur (host state changed):**
+- Installed `vainfo`, `mesa-va-drivers`, and `ffmpeg` (Debian apt).
+- Added user `cwnelson` to the `render` and `video` groups. **This was the real
+  blocker** — `/dev/dri/renderD128` is `root:render 0660`, so without `render`
+  membership both `vainfo` and ffmpeg failed with "Failed to open the given
+  device" / "No VA display found", even though the driver was correctly
+  installed. Requires a fresh login session to take effect.
+- **Gotcha for Stage 4 (containerizing):** the same render-group access applies
+  inside a pod — the container must run with the host `render` GID supplementary
+  group (or use an AMD device plugin) to open the render node. Existence of the
+  device alone is not enough.
 
 ## Architecture (target)
 

@@ -1,0 +1,21 @@
+[package]
+name = "arcadia"
+version = "0.1.0"
+edition = "2021"
+description = "Self-hosted Stadia-style cloud gaming — Stage 1: one-way video (capture → VA-API H.264 → WebRTC → browser)"
+
+[dependencies]
+gstreamer = "0.23"
+gstreamer-webrtc = "0.23"
+gstreamer-sdp = "0.23"
+glib = "0.20"
+tokio = { version = "1", features = ["full"] }
+axum = { version = "0.7", features = ["ws"] }
+tower-http = { version = "0.6", features = ["fs"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+futures-util = "0.3"

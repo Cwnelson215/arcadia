@@ -112,9 +112,8 @@ kind of games this makes sense for.
 
 ## Notes / decisions still open
 
-- Pick the build toolkit: **GStreamer `webrtcbin`** vs **Pion (Go)** vs
-  **aiortc (Python)**. (Recommendation: GStreamer for max learning-per-stage,
-  Pion to live in Go.)
+- ~~Pick the build toolkit~~ **DECIDED (2026-06-10): GStreamer (`webrtcbin`) +
+  Rust (`gstreamer-rs`).** Stage 1 is built and working on this stack.
 - If this graduates past a prototype it follows the existing per-app pattern
   (own repo, Dockerfile, k8s manifests) under `~/Dev/portfolio/`.
 - Run Sunshine first (Stage 0.5) even though the goal is a custom build — it
