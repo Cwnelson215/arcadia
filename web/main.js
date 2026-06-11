@@ -70,7 +70,12 @@ async function connect() {
 
   pc.ontrack = (ev) => {
     setState("streaming", "on");
-    $("video").srcObject = ev.streams[0];
+    const v = $("video");
+    v.srcObject = ev.streams[0];
+    // Audio + video share one stream; unmute (the Connect click is the gesture
+    // that satisfies autoplay) so the audio track is audible.
+    v.muted = false;
+    v.play().catch(() => {});
     // Minimize the receiver's playout buffer for low latency (Chrome).
     if ("playoutDelayHint" in ev.receiver) ev.receiver.playoutDelayHint = 0;
   };

@@ -11,14 +11,16 @@ de-risk the hardware and set a latency target to beat.)
 
 ## Status
 
-**Stage 3 (make it feel good) — DONE (2026-06-11).** Three improvements (audio
-deferred): **latency tuning** (`vah264enc target-usage=7`, `webrtcbin latency=40`,
-browser `playoutDelayHint=0` → jitter-buffer ~9 ms, smooth 60 fps); **gamepad**
-(browser Gamepad API → data channel → a uinput virtual Xbox-360 pad, so SDL games
-auto-map it — works on mobile + a Bluetooth controller too); and **reconnect +
-adaptive bitrate** (client auto-reconnect with backoff; a loss-feedback AIMD loop
-nudges the encoder bitrate, since `rtpgccbwe` isn't packaged). Next: Stage 4
-(cluster-native / gamescope). See [`ROADMAP.md`](./ROADMAP.md).
+**Stage 3 (make it feel good) — DONE (2026-06-11).** **Latency tuning**
+(`vah264enc target-usage=7`, `webrtcbin latency=40`, browser `playoutDelayHint=0`
+→ jitter-buffer ~9 ms, smooth 60 fps); **gamepad** (browser Gamepad API → data
+channel → a uinput virtual Xbox-360 pad, so SDL games auto-map it — works on
+mobile + a Bluetooth controller too); **reconnect + adaptive bitrate** (client
+auto-reconnect with backoff; a loss-feedback AIMD loop nudges the encoder
+bitrate, since `rtpgccbwe` isn't packaged); and **audio** (`--audio test|pulse` →
+Opus → a second WebRTC media stream; real desktop audio is captured from a
+PulseAudio null-sink monitor). Next: Stage 4 (cluster-native / gamescope). See
+[`ROADMAP.md`](./ROADMAP.md).
 
 **Stage 2 (input round-trip → playable) — DONE (2026-06-11).** The browser
 captures keyboard + mouse (Pointer Lock for relative mouse-look) and sends events

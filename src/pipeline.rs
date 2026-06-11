@@ -170,6 +170,27 @@ fn build_pipeline(
         other => bail!("unknown --source {other} (use: test | x11)"),
     };
 
+    // Optional audio: a second media branch (Opus) linked into the same
+    // webrtcbin via the `sendrecv.` reference, so it negotiates as a second
+    // m-line alongside the video.
+    let audio_chain = match args.audio.as_str() {
+        "none" => String::new(),
+        "test" => " audiotestsrc is-live=true wave=sine freq=440 volume=0.2 \
+                    ! audioconvert ! audioresample ! opusenc \
+                    ! rtpopuspay pt=97 \
+                    ! application/x-rtp,media=audio,encoding-name=OPUS,payload=97 \
+                    ! sendrecv."
+            .to_string(),
+        "pulse" => format!(
+            " pulsesrc device={} ! audioconvert ! audioresample ! opusenc \
+              ! rtpopuspay pt=97 \
+              ! application/x-rtp,media=audio,encoding-name=OPUS,payload=97 \
+              ! sendrecv.",
+            args.audio_device
+        ),
+        other => bail!("unknown --audio {other} (use: none | test | pulse)"),
+    };
+
     // NOTE: vah264enc property/profile names are version-sensitive — confirm with
     // `gst-inspect-1.0 vah264enc` on bulbasaur. Renoir's VAProfileH264ConstrainedBaseline
     // (verified in Stage 0) is the broadest for cross-browser WebRTC decode; if the
@@ -182,9 +203,10 @@ fn build_pipeline(
          ! video/x-h264,profile=constrained-baseline ! h264parse \
          ! rtph264pay pt=96 config-interval=-1 aggregate-mode=zero-latency mtu=1200 \
          ! application/x-rtp,media=video,encoding-name=H264,payload=96 \
-         ! webrtcbin name=sendrecv bundle-policy=max-bundle latency=40",
+         ! webrtcbin name=sendrecv bundle-policy=max-bundle latency=40{audio}",
         source = source_chain,
         bitrate = args.bitrate,
+        audio = audio_chain,
     );
     info!("gstreamer pipeline:\n  {desc}");
 

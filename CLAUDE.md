@@ -22,8 +22,8 @@ in [`ROADMAP.md`](./ROADMAP.md) — **read it first**.
 (`gstreamer-rs`).** All pipeline code lives in `src/` (a Cargo binary). Do not
 reintroduce Pion/aiortc.
 
-**Stage 3 (make it feel good) — DONE (2026-06-11).** User picked latency,
-gamepad, reconnect+bitrate; **audio deferred**.
+**Stage 3 (make it feel good) — DONE (2026-06-11).** Latency, gamepad,
+reconnect+bitrate, and **audio** (added same day).
 - **Latency tuning:** `vah264enc target-usage=7`, `webrtcbin latency=40` (from the
   200 ms default), browser sets the video receiver's `playoutDelayHint=0`.
   Measured jitter-buffer ~9 ms, smooth 60 fps. (`fps` in `getStats` reads low on a
@@ -40,6 +40,29 @@ gamepad, reconnect+bitrate; **audio deferred**.
   **browser-side AIMD heuristic** (loss>2% → ×0.85; loss<0.5% → +500 kbps, cap
   15 Mbps) sent as `{t:"r",kbps}`; server clamps (1–20 Mbps) and sets
   `vah264enc bitrate` live. (No `rtpgccbwe`/GCC — it's only in `gst-plugins-rs`.)
+- **Audio:** `--audio none|test|pulse` (+ `--audio-device`, default `arcadia.monitor`).
+  Adds a second media branch into the same `webrtcbin` via the `sendrecv.`
+  reference (`opusenc ! rtpopuspay ! application/x-rtp,...,encoding-name=OPUS,
+  payload=97 ! sendrecv.`), negotiated as a second `m=audio OPUS/48000/2` m-line.
+  `test` = a 440 Hz tone (proves the path); `pulse` = `pulsesrc device=<monitor>`
+  capturing real desktop audio. Browser unmutes the `<video>` on `ontrack` (the
+  Connect click is the autoplay gesture). Pipeline string built in
+  `src/pipeline.rs` `build_pipeline`.
+
+  **Real audio needs PulseAudio (host setup, non-persistent — re-do after reboot):**
+  ```
+  sudo apt install -y pulseaudio pulseaudio-utils
+  pulseaudio --start --exit-idle-time=-1
+  pactl load-module module-null-sink sink_name=arcadia sink_properties=device.description=arcadia
+  pactl set-default-sink arcadia                       # apps now output here
+  pactl load-module module-native-protocol-tcp auth-ip-acl=127.0.0.1
+  ```
+  Run arcadia with `PULSE_SERVER=127.0.0.1 ... --audio pulse`. **Gotcha:**
+  `XDG_RUNTIME_DIR` is **empty** over Tailscale SSH (no PAM session dir), so the
+  default `$XDG_RUNTIME_DIR/pulse/native` socket isn't reliably found across
+  sessions — hence the **TCP module + `PULSE_SERVER=127.0.0.1`** (also stops
+  arcadia from autospawning its own empty daemon). The game/app must output to
+  the `arcadia` sink (it's the default), which feeds `arcadia.monitor`.
 
 **Stage-3 gotchas:**
 - **uinput needs a udev rule + `input` group.** `/dev/uinput` is `root:root 0600`;

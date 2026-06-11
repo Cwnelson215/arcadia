@@ -29,6 +29,14 @@ pub struct Args {
     #[arg(long, default_value = ":99")]
     pub display: String,
 
+    /// Audio source: "none", "test" (440 Hz tone), or "pulse" (a PulseAudio monitor)
+    #[arg(long, default_value = "none")]
+    pub audio: String,
+
+    /// PulseAudio capture device for --audio pulse (a sink's `.monitor`)
+    #[arg(long, default_value = "arcadia.monitor")]
+    pub audio_device: String,
+
     /// Target H.264 bitrate in kbps
     #[arg(long, default_value_t = 15000)]
     pub bitrate: u32,
