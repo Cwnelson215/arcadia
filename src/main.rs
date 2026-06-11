@@ -15,6 +15,7 @@ use std::net::SocketAddr;
 
 mod gamepad;
 mod input;
+mod launcher;
 mod pipeline;
 mod signaling;
 
@@ -48,6 +49,10 @@ pub struct Args {
     /// Directory of the static web client
     #[arg(long, default_value = "web")]
     pub web_dir: String,
+
+    /// Games registry (TOML) for the launcher. Missing file = no games.
+    #[arg(long, default_value = "games.toml")]
+    pub games_config: String,
 
     /// Create the virtual gamepad and sweep it for ~8s, then exit (no server).
     /// For verifying uinput access without a browser/controller.

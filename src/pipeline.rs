@@ -46,17 +46,20 @@ pub async fn run_session(socket: WebSocket, args: Arc<Args>) -> Result<()> {
 
     // Input round-trip: a data channel the browser sends key/mouse/gamepad
     // events on. Created *before* PLAYING so it appears in the SDP offer and
-    // negotiates alongside the video. Keyboard/mouse go to the XTEST injector;
-    // gamepad goes to the uinput injector (separate threads).
+    // negotiates alongside the video. Keyboard/mouse and gamepad both inject via
+    // uinput, on separate threads (each owns its own virtual devices).
     let (input_tx, input_rx) = std_mpsc::channel::<input::InputEvent>();
-    let display = args.display.clone();
-    std::thread::spawn(move || input::run(display, input_rx));
+    std::thread::spawn(move || input::run(input_rx));
 
     let (gamepad_tx, gamepad_rx) = std_mpsc::channel::<input::GamepadState>();
     std::thread::spawn(move || gamepad::run(gamepad_rx));
 
     // The H.264 encoder, for adaptive-bitrate requests (changeable while PLAYING).
     let enc = pipeline.by_name("enc").context("encoder 'enc' not found")?;
+
+    // The ximagesrc capture element (only with --source x11), so the browser can
+    // toggle the captured cursor's visibility live as it (un)locks the pointer.
+    let cap = pipeline.by_name("cap");
 
     // "create-data-channel" returns a *nullable* GstWebRTCDataChannel, so it must
     // be received as Option<_> (else glib's conversion panics).
@@ -85,6 +88,13 @@ pub async fn run_session(socket: WebSocket, args: Arc<Args>) -> Result<()> {
                     input::InputEvent::Bitrate { kbps } => {
                         let clamped = kbps.clamp(1000, 20000);
                         enc.set_property("bitrate", clamped);
+                    }
+                    input::InputEvent::Capture { on } => {
+                        // Show the captured X cursor only while the browser holds
+                        // pointer lock. No-op for --source test (no `cap`).
+                        if let Some(cap) = &cap {
+                            cap.set_property("show-pointer", on);
+                        }
                     }
                     other => {
                         let _ = input_tx.send(other);
@@ -163,7 +173,7 @@ fn build_pipeline(
                 .to_string()
         }
         "x11" => format!(
-            "ximagesrc display-name={} use-damage=false show-pointer=false \
+            "ximagesrc display-name={} use-damage=false show-pointer=false name=cap \
              ! video/x-raw,framerate=60/1",
             args.display
         ),
@@ -197,7 +207,7 @@ fn build_pipeline(
     // profile caps fail to negotiate, fall back to `profile=main`.
     let desc = format!(
         "{source} \
-         ! videoconvert ! video/x-raw,format=NV12 \
+         ! vapostproc ! video/x-raw(memory:VAMemory),format=NV12 \
          ! vah264enc name=enc rate-control=cbr bitrate={bitrate} key-int-max=30 b-frames=0 \
            target-usage=7 \
          ! video/x-h264,profile=constrained-baseline ! h264parse \

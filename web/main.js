@@ -205,6 +205,65 @@ function startStats() {
 
 $("connect").addEventListener("click", start);
 
+// ---- game launcher -----------------------------------------------------------
+// List games from the server, launch one (the server runs it on the capture
+// display), then connect the stream. Stop kills the running game. The launcher
+// is independent of the WebRTC session — launching a new game while connected
+// just changes what the (continuously captured) display shows.
+
+async function loadGames() {
+  const el = $("games");
+  try {
+    const res = await fetch("/api/games");
+    const { games, current } = await res.json();
+    if (!games || games.length === 0) {
+      el.textContent = "no games configured (edit games.toml)";
+      return;
+    }
+    el.textContent = "";
+    for (const g of games) {
+      const b = document.createElement("button");
+      b.className = "game" + (g.id === current ? " running" : "");
+      b.textContent = g.name;
+      b.title = g.command + (g.args && g.args.length ? " " + g.args.join(" ") : "");
+      b.addEventListener("click", () => launchGame(g.id));
+      el.appendChild(b);
+    }
+  } catch (e) {
+    el.textContent = "failed to load games";
+  }
+}
+
+async function launchGame(id) {
+  try {
+    const res = await fetch("/api/launch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || !body.ok) {
+      setState("launch failed: " + (body.error || res.status), "err");
+      await loadGames();
+      return;
+    }
+    await loadGames();
+    if (!wantConnected) start(); // connect the stream if not already
+  } catch (e) {
+    setState("launch failed", "err");
+  }
+}
+
+async function stopGame() {
+  try {
+    await fetch("/api/stop", { method: "POST" });
+  } catch (e) {}
+  await loadGames();
+}
+
+$("stop").addEventListener("click", stopGame);
+loadGames();
+
 // ---- input capture (Stage 2) -------------------------------------------------
 // Pointer Lock gives relative mouse deltas (movementX/Y) ideal for mouse-look.
 // Keyboard + mouse events are sent over the "input" data channel as JSON, but
@@ -223,17 +282,37 @@ function sendInput(obj) {
   }
 }
 
-videoEl.addEventListener("click", () => {
-  if (pc) videoEl.requestPointerLock();
-});
-
-document.addEventListener("pointerlockchange", () => {
+// Clicking the video captures mouse + keyboard via pointer lock (windowed). Esc
+// releases (browser default). The captured cursor is shown server-side only
+// while locked. (Esc-to-the-game via Keyboard Lock needs a secure HTTPS context
+// and was removed for now — to be re-added once HTTPS is in place.)
+function updateHint() {
   const locked = inputActive();
   const hint = $("hint");
   hint.className = locked ? "locked" : "";
   hint.textContent = locked
-    ? "playing — mouse + keyboard captured · press Esc to release"
-    : "click the video to capture mouse + keyboard · press Esc to release";
+    ? "captured — press Esc to release"
+    : "click the video to capture mouse + keyboard";
+}
+
+videoEl.addEventListener("click", () => {
+  if (pc && !inputActive()) videoEl.requestPointerLock();
+});
+
+// Manual fullscreen toggle — fullscreens the wrapper (#stage), NOT the <video>
+// (fullscreening the video makes the browser overlay native media controls).
+$("fullscreen").addEventListener("click", async () => {
+  try {
+    if (!document.fullscreenElement) await $("stage").requestFullscreen();
+    else await document.exitFullscreen();
+  } catch (e) {}
+});
+
+document.addEventListener("pointerlockchange", () => {
+  const locked = inputActive();
+  // Show the captured cursor only while we hold the pointer.
+  sendInput({ t: "c", on: locked });
+  updateHint();
 });
 
 document.addEventListener("mousemove", (e) => {
@@ -266,18 +345,16 @@ document.addEventListener(
 );
 
 document.addEventListener("keydown", (e) => {
-  if (inputActive()) {
-    e.preventDefault();
-    if (e.repeat) return; // hold = one down; X server handles auto-repeat
-    sendInput({ t: "k", code: e.code, down: true });
-  }
+  if (!inputActive()) return;
+  e.preventDefault();
+  if (e.repeat) return; // hold = one down; the host handles auto-repeat
+  sendInput({ t: "k", code: e.code, down: true });
 });
 
 document.addEventListener("keyup", (e) => {
-  if (inputActive()) {
-    e.preventDefault();
-    sendInput({ t: "k", code: e.code, down: false });
-  }
+  if (!inputActive()) return;
+  e.preventDefault();
+  sendInput({ t: "k", code: e.code, down: false });
 });
 
 // ---- gamepad (Stage 3b) ------------------------------------------------------

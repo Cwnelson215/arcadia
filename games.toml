@@ -1,0 +1,46 @@
+# arcadia game launcher registry.
+#
+# Each [[game]] is a launchable entry. The launcher starts one at a time onto
+# the capture display (arcadia --display, default :99) with
+# PULSE_SERVER=127.0.0.1 so audio reaches the `arcadia` PulseAudio sink.
+#
+# Fields:
+#   id              required  stable id used by /api/launch
+#   name            required  label shown in the web launcher
+#   command         required  executable (looked up on PATH)
+#   args            optional  list of arguments
+#   cwd             optional  working directory
+#   env             optional  extra environment variables (table)
+#   gamescope       optional  wrap in `gamescope -W 1280 -H 720 -f -- <command>`
+#   gamescope_args  optional  extra gamescope flags (only when gamescope = true)
+#
+# Tip: bring a new game up WITHOUT gamescope first to isolate variables, then
+# flip `gamescope = true` once it streams and controls cleanly.
+
+# Smoke test — proves the accelerated display + capture path with a moving,
+# GPU-rendered window. On the accelerated Xorg this should run at the GPU's
+# refresh, not the ~software fps Xvfb gave.
+[[game]]
+id = "glxgears"
+name = "glxgears (test)"
+command = "glxgears"
+
+# Steam Big Picture / gamepad UI. First run needs a one-time interactive Steam
+# login (do it through the stream or a local session). Recommended end state is
+# `gamescope = true`; left false here so it's verified bare first.
+[[game]]
+id = "steam"
+name = "Steam (Big Picture)"
+command = "steam"
+args = ["-gamepadui"]
+gamescope = false
+
+# RetroArch — opens its menu; load cores/ROMs from there, or pin a specific ROM
+# by setting args, e.g.:
+#   args = ["-L", "/usr/lib/libretro/snes9x_libretro.so", "/roms/snes/game.sfc"]
+# `-f` starts fullscreen so it fills the 1280x720 capture display (no black bars).
+[[game]]
+id = "retroarch"
+name = "RetroArch"
+command = "retroarch"
+args = ["-f"]

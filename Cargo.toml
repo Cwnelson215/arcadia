@@ -14,10 +14,10 @@ axum = { version = "0.7", features = ["ws"] }
 tower-http = { version = "0.6", features = ["fs"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+toml = "0.8"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 futures-util = "0.3"
-x11rb = { version = "0.13", features = ["xtest"] }
 evdev = "0.12"

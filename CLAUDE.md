@@ -22,6 +22,145 @@ in [`ROADMAP.md`](./ROADMAP.md) — **read it first**.
 (`gstreamer-rs`).** All pipeline code lives in `src/` (a Cargo binary). Do not
 reintroduce Pion/aiortc.
 
+**Stage 4 (run real games — launcher) — WORKING (2026-06-11).**
+Turns arcadia from "streams a throwaway Xvfb test display" into "pick Steam / an
+emulator from a web menu and play it." The capture→encode→WebRTC→input pipeline
+is **unchanged** — the work is a launcher plus pointing capture at a *real*
+display. **Verified end-to-end on bulbasaur from a tailnet client (2026-06-11):**
+accelerated Xorg `:99` (radeonsi/renoir), launcher runs games, and **RetroArch +
+Steam (Big Picture, logged in) both stream and take keyboard/mouse/gamepad input**
+— no window manager needed.
+- **Still pending / deferred:** `--audio pulse` end-to-end (arcadia currently runs
+  `--audio none`; switch to `scripts/run-session.sh` for sound); **gamescope** (NOT
+  in Debian trixie repos — `apt-cache policy gamescope` = no candidate; would need
+  a source build/Flatpak, and it isn't needed since Big Picture/RetroArch `-f` go
+  fullscreen on their own); **Esc-to-the-game** (needs real HTTPS — see the
+  Esc-deferred gotcha); password gate + truly-public access.
+- **HTTPS / `tailscale serve`:** a `tailscale serve --bg 8080` config exists
+  (`https://bulbasaur.tail71e22f.ts.net` → `127.0.0.1:8080`) but the cert came back
+  **self-signed** (HTTPS-certs provisioning incomplete). **Use the plain
+  `http://100.78.86.4:8080` URL** for now; finish HTTPS only when re-adding Esc.
+- **Launcher:** `src/launcher.rs` — a `games.toml` registry + single-slot process
+  supervisor. Spawns one game at a time onto the capture display with
+  `DISPLAY=:99` + `PULSE_SERVER=127.0.0.1`; launching another stops the first.
+  Optional per-game `gamescope = true` wraps it in `gamescope -W 1280 -H 720 -f
+  -- <cmd>`. Exposed by the axum server (`src/signaling.rs`) as HTTP
+  `GET /api/games`, `POST /api/launch {id}`, `POST /api/stop` — independent of any
+  WebRTC session. Web menu in `web/`. Run via `scripts/run-session.sh`.
+- **Access stays on Tailscale** (client runs the Tailscale app). Truly-public
+  access (router port-forward + DDNS + TURN) and a password gate are **deferred**
+  — a public path can't carry the WebRTC UDP media without TURN, and there's no
+  router access today.
+- **The hard prerequisite — a GPU-accelerated headless display.** Xvfb is
+  software-only (llvmpipe), so real games — and gamescope itself, which needs
+  Vulkan — can't run on it. Stage 4 requires a real **Xorg on `:99` driven by
+  `amdgpu`** so games render on the Vega iGPU. The existing pipeline captures it
+  unchanged; gamescope then runs *nested* on top (only possible once the display
+  is accelerated). Pure headless-gamescope-on-DRM with a custom GStreamer capture
+  sink (what Wolf does) is deliberately **out of scope**.
+
+  **Host setup (non-persistent — re-do after reboot unless made a service):**
+  ```
+  # Display/GPU stack + RetroArch are all in trixie `main`:
+  sudo apt install -y xserver-xorg xserver-xorg-video-amdgpu \
+       mesa-utils vulkan-tools libvulkan1 mesa-vulkan-drivers retroarch
+  # Steam (non-free, needs the i386 arch) — Debian's package is `steam-installer`.
+  # bulbasaur's trixie sources ship only `main non-free-firmware`, so add non-free:
+  sudo sed -i 's/main non-free-firmware/main contrib non-free non-free-firmware/' /etc/apt/sources.list
+  sudo dpkg --add-architecture i386
+  sudo apt update
+  sudo apt install -y steam-installer   # provides `steam`; first run bootstraps + asks login
+  # NOTE: `gamescope` is NOT in trixie repos (apt-cache policy gamescope = no
+  # candidate). Skipped — Big Picture / RetroArch `-f` fullscreen without it.
+  # let the user run Xorg headless (no seat/logind):
+  printf 'allowed_users=anybody\nneeds_root_rights=yes\n' | sudo tee /etc/X11/Xwrapper.config
+  # accelerated virtual-head config (no monitor attached):
+  sudo tee /etc/X11/xorg-arcadia.conf >/dev/null <<'EOF'
+  Section "Device"
+      Identifier "amd"
+      Driver "amdgpu"
+      Option "AllowEmptyInitialConfiguration" "true"
+  EndSection
+  Section "Monitor"
+      Identifier "vmon"
+      Modeline "1280x720" 74.50 1280 1344 1472 1664 720 723 728 748 -hsync +vsync
+      Option "Enable" "true"
+  EndSection
+  Section "Screen"
+      Identifier "scr"
+      Device "amd"
+      Monitor "vmon"
+      DefaultDepth 24
+      SubSection "Display"
+          Depth 24
+          Modes "1280x720"
+          Virtual 1280 720
+      EndSubSection
+  EndSection
+  EOF
+  ```
+  `scripts/run-session.sh` then starts Xorg `:99` with this config, ensures the
+  PulseAudio `arcadia` sink, and runs arcadia. **Gate:** `DISPLAY=:99 glxinfo |
+  grep -i renderer` must report **radeonsi/AMD**, not `llvmpipe` — llvmpipe means
+  the GPU isn't bound and games are unplayable. Also confirm `DISPLAY=:99
+  vulkaninfo` lists the Vega device (gamescope needs it).
+
+  **Stage-4 gotchas (expect host iteration):**
+  - **amdgpu with no monitor may refuse to set a mode.** The virtual Modeline +
+    `AllowEmptyInitialConfiguration` above is the fix; if Xorg still won't come
+    up (see `/tmp/xorg-arcadia.log`), a cheap **HDMI dummy plug** forces a real
+    connector, or fall back to the `modesetting` driver.
+  - **Running Xorg as the user needs `Xwrapper.config`** (above) — else `Xorg :99`
+    aborts with "only console users are allowed to run the X server".
+  - **A setuid-root Xorg rejects an absolute `-config` path** (security): pass the
+    **basename** (`-config xorg-arcadia.conf`); Xorg searches `/etc/X11`. An
+    absolute path silently falls back to autodetect (llvmpipe). `run-session.sh`
+    already does this.
+  - **A leftover `Xvfb :99`** from Stage 1 blocks Xorg with "Server is already
+    active for display 99" — and its software GL is what makes `glxinfo` read
+    `llvmpipe`. `run-session.sh` now kills stale Xvfb + clears `/tmp/.X99-lock`
+    first. **Verified 2026-06-11:** with this cleared, `:99` reports
+    `AMD Radeon Graphics (radeonsi, renoir)` and the launcher runs glxgears on
+    the GPU.
+  - **Steam's first run is interactive** (login). Do it once through the stream
+    (launch "Steam", Connect, log in) or a local session before it's headless-usable.
+  - **Input tuning (2026-06-11): keyboard/mouse moved XTEST → uinput.** Under the
+    real Xorg, XTEST and `ximagesrc` grabs both serialize on the single-threaded X
+    server, so input bursts stuttered the video. `src/input.rs` now injects
+    keyboard + mouse via uinput virtual devices (off the X request path), same as
+    the gamepad. Same pass: the capture colorspace convert moved CPU
+    `videoconvert` → GPU `vapostproc` (VAMemory NV12) in `src/pipeline.rs`.
+    (uinput needs `/dev/uinput` writable — udev rule + `input` group, already set
+    up in Stage 3.)
+  - **Cursor (2026-06-11):** the captured X cursor is shown only while the browser
+    holds pointer lock — `web/main.js` sends `{t:"c",on}` on `pointerlockchange`
+    and `src/pipeline.rs` toggles `ximagesrc cap.show-pointer` live (named element
+    `cap`; default off). Capture is plain **windowed pointer lock**; **Esc
+    releases**. Games launch fullscreen to fill the 1280×720 display (e.g.
+    RetroArch `-f` in `games.toml`); no WM is needed (Steam Big Picture + RetroArch
+    both take input under bare PointerRoot focus, verified 2026-06-11).
+  - **Esc-to-the-game — DEFERRED (don't re-add over HTTP).** Intercepting Esc so it
+    reaches the game needs the browser **Keyboard Lock API**, which requires *both*
+    fullscreen *and* a **secure (HTTPS) context** — over plain `http://<ip>:8080`
+    `navigator.keyboard` is undefined and it silently no-ops. An attempt
+    (always-fullscreen + Keyboard Lock + an Esc+Backspace release combo, fronted by
+    `tailscale serve` HTTPS) destabilized the WebRTC session (reconnect churn → the
+    data channel kept dropping → dead input) and was **reverted** to the simple
+    capture. Revisit only once arcadia is served over *real* HTTPS: enable HTTPS
+    certs in the tailnet, `sudo tailscale cert bulbasaur.tail71e22f.ts.net`, then
+    `sudo tailscale serve --bg 8080`, and load `https://bulbasaur.tail71e22f.ts.net/`.
+    `web/index.html` loads `main.js?v=N` — **bump N when changing the client** to
+    dodge browser caching (a stale cached client caused an hour of "input dead").
+  - **Browser quirk:** fullscreen targets a wrapper `<div id="stage">`, **not** the
+    `<video>`. Fullscreening the `<video>` element makes Chrome overlay native
+    media controls (a pause button + running timer in the corner) — which looks
+    like an in-stream OSD but isn't. Diagnosed by grabbing `:99` directly
+    (`ffmpeg -f x11grab`): the framebuffer was clean, proving it was client-side.
+  - **RetroArch OSD:** its menu **widgets** (a pause/clock overlay) and the menu
+    clock are on by default. Disabled in `~/.config/retroarch/retroarch.cfg` on
+    bulbasaur: `menu_widgets_enable=false`, `menu_timedate_enable=false`,
+    `menu_battery_level_enable=false` (host config, not in the repo).
+
 **Stage 3 (make it feel good) — DONE (2026-06-11).** Latency, gamepad,
 reconnect+bitrate, and **audio** (added same day).
 - **Latency tuning:** `vah264enc target-usage=7`, `webrtcbin latency=40` (from the

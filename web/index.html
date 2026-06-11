@@ -10,12 +10,23 @@
     #wrap { display: flex; flex-direction: column; align-items: center;
             gap: 12px; padding: 16px; }
     h2 { margin: 4px 0; font-weight: 600; }
-    video { background: #000; width: 1280px; max-width: 100%; aspect-ratio: 16 / 9; }
+    video { background: #000; width: 1280px; max-width: 100%; aspect-ratio: 16 / 9;
+            display: block; }
+    /* Fullscreen a wrapper, NOT the <video> — fullscreening the video itself makes
+       the browser overlay native media controls (a pause button + a running timer
+       in the corner). */
+    #stage:fullscreen { display: flex; align-items: center; justify-content: center;
+                        background: #000; width: 100%; height: 100%; }
+    #stage:fullscreen video { width: 100%; height: 100%; aspect-ratio: auto;
+                              object-fit: contain; }
     #bar { display: flex; gap: 12px; align-items: center; }
     button { padding: 8px 16px; font-size: 14px; cursor: pointer; }
     button:disabled { cursor: default; opacity: 0.5; }
     #hint { color: #9aa; font-size: 13px; }
     #hint.locked { color: #3c3; }
+    #games { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center;
+             max-width: 1280px; }
+    #games button.game.running { outline: 2px solid #3c3; }
     #stats { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
              white-space: pre; background: #1b1b1b; padding: 10px 14px;
              border-radius: 6px; min-width: 320px; }
@@ -27,16 +38,19 @@
 </head>
 <body>
   <div id="wrap">
-    <h2>arcadia — Stage 1 (one-way video)</h2>
+    <h2>arcadia</h2>
+    <div id="games">loading games…</div>
     <div id="bar">
       <button id="connect">Connect</button>
+      <button id="stop">Stop game</button>
+      <button id="fullscreen">Fullscreen</button>
       <span class="dot" id="state"></span>
       <span id="statetext">idle</span>
     </div>
-    <video id="video" autoplay playsinline muted></video>
-    <div id="hint">click the video to capture mouse + keyboard · press Esc to release</div>
+    <div id="stage"><video id="video" autoplay playsinline muted disablepictureinpicture></video></div>
+    <div id="hint">click the video to capture mouse + keyboard</div>
     <div id="stats">no stats yet — click Connect</div>
   </div>
-  <script src="main.js"></script>
+  <script src="main.js?v=2"></script>
 </body>
 </html>
