@@ -22,6 +22,36 @@ in [`ROADMAP.md`](./ROADMAP.md) — **read it first**.
 (`gstreamer-rs`).** All pipeline code lives in `src/` (a Cargo binary). Do not
 reintroduce Pion/aiortc.
 
+**Stage 2 (input round-trip → playable) — DONE (2026-06-11).** Browser captures
+keyboard + mouse and sends events over a WebRTC **data channel**; the server
+injects them into the headless X display via **X11 XTEST** (`x11rb`, in-process,
+no root). Verified: typed keys reach an `xterm`, `xeyes` tracks the mouse.
+- **Injection = XTEST, not uinput** (decided 2026-06-11). `/dev/uinput` is
+  root-only *and* Xvfb doesn't read evdev, so uinput can't reach `:99` apps
+  without gamescope. XTEST injects straight into the X server. The browser
+  capture + data-channel half is mechanism-agnostic — a later uinput+gamescope
+  switch reuses it. Code: `src/input.rs` (XTEST injector on its own thread,
+  fed by an mpsc channel; `KeyboardEvent.code` → keysym → keycode map; relative
+  mouse via `xtest_fake_input(MOTION_NOTIFY, detail=1, …)`; releases held keys on
+  disconnect). Wiring in `src/pipeline.rs`; capture in `web/main.js` (Pointer
+  Lock, gated on lock). Scope = keyboard + mouse; **gamepad is Stage 3**.
+- Test apps via `scripts/run-x11.sh`: `xterm` (keyboard) + `xeyes` (mouse), no WM
+  (PointerRoot focus). Needs `x11-apps`.
+
+**Stage-2 gotchas (all cost build/debug time):**
+- **`webrtcbin` create-data-channel needs the pipeline ≥ READY** — calling it in
+  NULL state returns null + `assertion 'is_closed != TRUE' failed`. Set the
+  pipeline to READY *before* `create-data-channel`, then PLAYING (READY doesn't
+  trigger negotiation, so the channel still rides the first offer).
+- **`gstreamer-webrtc::WebRTCDataChannel` is feature-gated** behind `v1_18`+ —
+  enable it in `Cargo.toml` (`features = ["v1_22"]`), else the type doesn't exist.
+- **`create-data-channel` returns a *nullable* GstWebRTCDataChannel** — emit as
+  `emit_by_name::<Option<WebRTCDataChannel>>(…)` or glib panics with the cryptic
+  "expected GstWebRTCDataChannel, got GstWebRTCDataChannel".
+- **`tracing` reserves `display`/`debug`** — a local variable named `display`
+  passed to `info!`/`error!` resolves to `tracing::field::display` and fails to
+  compile. Rename the variable.
+
 **Stage 1 (one-way video) — DONE (2026-06-10).** Working end-to-end on bulbasaur:
 capture → VA-API H.264 → WebRTC → browser, verified at 1280×720@60 with ~30–40 ms
 network RTT, for both `--source test` (videotestsrc) and `--source x11`

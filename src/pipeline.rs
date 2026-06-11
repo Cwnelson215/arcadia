@@ -19,7 +19,9 @@ use gstreamer as gst;
 use gstreamer::prelude::*;
 use gstreamer_sdp as gst_sdp;
 use gstreamer_webrtc as gst_webrtc;
+use crate::input;
 use serde_json::{json, Value};
+use std::sync::mpsc as std_mpsc;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
@@ -32,6 +34,46 @@ pub async fn run_session(socket: WebSocket, args: Arc<Args>) -> Result<()> {
 
     let (pipeline, webrtc) =
         build_pipeline(&args, out_tx.clone()).context("building pipeline")?;
+
+    // webrtcbin only allows create-data-channel once it's realized (its SCTP
+    // transport exists) — i.e. at least READY. READY doesn't trigger
+    // negotiation (that waits for PLAYING), so the channel still makes the first
+    // offer alongside the video.
+    pipeline
+        .set_state(gst::State::Ready)
+        .context("setting pipeline to READY")?;
+
+    // Input round-trip: a data channel the browser sends key/mouse events on,
+    // forwarded to the XTEST injector thread. Created *before* PLAYING so it
+    // appears in the SDP offer and negotiates alongside the video.
+    let (input_tx, input_rx) = std_mpsc::channel::<input::InputEvent>();
+    let display = args.display.clone();
+    std::thread::spawn(move || input::run(display, input_rx));
+
+    // "create-data-channel" returns a *nullable* GstWebRTCDataChannel, so it must
+    // be received as Option<_> (else glib's conversion panics).
+    let data_channel = webrtc
+        .emit_by_name::<Option<gst_webrtc::WebRTCDataChannel>>(
+            "create-data-channel",
+            &[&"input", &None::<gst::Structure>],
+        )
+        .context("webrtcbin create-data-channel returned null")?;
+    data_channel.connect_closure(
+        "on-open",
+        false,
+        glib::closure!(move |_dc: &gst_webrtc::WebRTCDataChannel| {
+            info!("input data channel open");
+        }),
+    );
+    data_channel.connect_closure(
+        "on-message-string",
+        false,
+        glib::closure!(move |_dc: &gst_webrtc::WebRTCDataChannel, msg: String| {
+            if let Some(ev) = input::InputEvent::from_json(&msg) {
+                let _ = input_tx.send(ev);
+            }
+        }),
+    );
 
     let bus = pipeline.bus().expect("pipeline has a bus");
     let mut bus_stream = bus.stream();

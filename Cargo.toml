@@ -6,7 +6,7 @@ description = "Self-hosted Stadia-style cloud gaming — Stage 1: one-way video 
 
 [dependencies]
 gstreamer = "0.23"
-gstreamer-webrtc = "0.23"
+gstreamer-webrtc = { version = "0.23", features = ["v1_22"] }
 gstreamer-sdp = "0.23"
 glib = "0.20"
 tokio = { version = "1", features = ["full"] }
@@ -19,3 +19,4 @@ clap = { version = "4", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 futures-util = "0.3"
+x11rb = { version = "0.13", features = ["xtest"] }

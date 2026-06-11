@@ -48,6 +48,16 @@ async function connect() {
     setState(s, s === "connected" ? "on" : s === "failed" ? "err" : null);
   };
 
+  // The server (offerer) creates the "input" data channel; we send key/mouse
+  // events on it.
+  pc.ondatachannel = (ev) => {
+    inputCh = ev.channel;
+    inputCh.onopen = () => console.log("input channel open");
+    inputCh.onclose = () => {
+      inputCh = null;
+    };
+  };
+
   ws = new WebSocket(wsUrl());
   ws.onmessage = async (ev) => {
     const msg = JSON.parse(ev.data);
@@ -119,3 +129,78 @@ function startStats() {
 }
 
 $("connect").addEventListener("click", connect);
+
+// ---- input capture (Stage 2) -------------------------------------------------
+// Pointer Lock gives relative mouse deltas (movementX/Y) ideal for mouse-look.
+// Keyboard + mouse events are sent over the "input" data channel as JSON, but
+// only while the pointer is locked to the video (Esc releases).
+
+let inputCh = null;
+const videoEl = $("video");
+
+function inputActive() {
+  return document.pointerLockElement === videoEl;
+}
+
+function sendInput(obj) {
+  if (inputCh && inputCh.readyState === "open") {
+    inputCh.send(JSON.stringify(obj));
+  }
+}
+
+videoEl.addEventListener("click", () => {
+  if (pc) videoEl.requestPointerLock();
+});
+
+document.addEventListener("pointerlockchange", () => {
+  const locked = inputActive();
+  const hint = $("hint");
+  hint.className = locked ? "locked" : "";
+  hint.textContent = locked
+    ? "playing — mouse + keyboard captured · press Esc to release"
+    : "click the video to capture mouse + keyboard · press Esc to release";
+});
+
+document.addEventListener("mousemove", (e) => {
+  if (inputActive()) sendInput({ t: "m", dx: e.movementX, dy: e.movementY });
+});
+
+document.addEventListener("mousedown", (e) => {
+  if (inputActive()) {
+    e.preventDefault();
+    sendInput({ t: "b", button: e.button, down: true });
+  }
+});
+
+document.addEventListener("mouseup", (e) => {
+  if (inputActive()) {
+    e.preventDefault();
+    sendInput({ t: "b", button: e.button, down: false });
+  }
+});
+
+document.addEventListener(
+  "wheel",
+  (e) => {
+    if (inputActive()) {
+      e.preventDefault();
+      sendInput({ t: "w", dy: e.deltaY });
+    }
+  },
+  { passive: false }
+);
+
+document.addEventListener("keydown", (e) => {
+  if (inputActive()) {
+    e.preventDefault();
+    if (e.repeat) return; // hold = one down; X server handles auto-repeat
+    sendInput({ t: "k", code: e.code, down: true });
+  }
+});
+
+document.addEventListener("keyup", (e) => {
+  if (inputActive()) {
+    e.preventDefault();
+    sendInput({ t: "k", code: e.code, down: false });
+  }
+});
