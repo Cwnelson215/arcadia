@@ -19,6 +19,7 @@ use gstreamer as gst;
 use gstreamer::prelude::*;
 use gstreamer_sdp as gst_sdp;
 use gstreamer_webrtc as gst_webrtc;
+use crate::gamepad;
 use crate::input;
 use serde_json::{json, Value};
 use std::sync::mpsc as std_mpsc;
@@ -43,12 +44,19 @@ pub async fn run_session(socket: WebSocket, args: Arc<Args>) -> Result<()> {
         .set_state(gst::State::Ready)
         .context("setting pipeline to READY")?;
 
-    // Input round-trip: a data channel the browser sends key/mouse events on,
-    // forwarded to the XTEST injector thread. Created *before* PLAYING so it
-    // appears in the SDP offer and negotiates alongside the video.
+    // Input round-trip: a data channel the browser sends key/mouse/gamepad
+    // events on. Created *before* PLAYING so it appears in the SDP offer and
+    // negotiates alongside the video. Keyboard/mouse go to the XTEST injector;
+    // gamepad goes to the uinput injector (separate threads).
     let (input_tx, input_rx) = std_mpsc::channel::<input::InputEvent>();
     let display = args.display.clone();
     std::thread::spawn(move || input::run(display, input_rx));
+
+    let (gamepad_tx, gamepad_rx) = std_mpsc::channel::<input::GamepadState>();
+    std::thread::spawn(move || gamepad::run(gamepad_rx));
+
+    // The H.264 encoder, for adaptive-bitrate requests (changeable while PLAYING).
+    let enc = pipeline.by_name("enc").context("encoder 'enc' not found")?;
 
     // "create-data-channel" returns a *nullable* GstWebRTCDataChannel, so it must
     // be received as Option<_> (else glib's conversion panics).
@@ -70,7 +78,18 @@ pub async fn run_session(socket: WebSocket, args: Arc<Args>) -> Result<()> {
         false,
         glib::closure!(move |_dc: &gst_webrtc::WebRTCDataChannel, msg: String| {
             if let Some(ev) = input::InputEvent::from_json(&msg) {
-                let _ = input_tx.send(ev);
+                match ev {
+                    input::InputEvent::Gamepad(state) => {
+                        let _ = gamepad_tx.send(state);
+                    }
+                    input::InputEvent::Bitrate { kbps } => {
+                        let clamped = kbps.clamp(1000, 20000);
+                        enc.set_property("bitrate", clamped);
+                    }
+                    other => {
+                        let _ = input_tx.send(other);
+                    }
+                }
             }
         }),
     );
@@ -159,10 +178,11 @@ fn build_pipeline(
         "{source} \
          ! videoconvert ! video/x-raw,format=NV12 \
          ! vah264enc name=enc rate-control=cbr bitrate={bitrate} key-int-max=30 b-frames=0 \
+           target-usage=7 \
          ! video/x-h264,profile=constrained-baseline ! h264parse \
          ! rtph264pay pt=96 config-interval=-1 aggregate-mode=zero-latency mtu=1200 \
          ! application/x-rtp,media=video,encoding-name=H264,payload=96 \
-         ! webrtcbin name=sendrecv bundle-policy=max-bundle",
+         ! webrtcbin name=sendrecv bundle-policy=max-bundle latency=40",
         source = source_chain,
         bitrate = args.bitrate,
     );

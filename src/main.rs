@@ -13,6 +13,7 @@ use anyhow::Result;
 use clap::Parser;
 use std::net::SocketAddr;
 
+mod gamepad;
 mod input;
 mod pipeline;
 mod signaling;
@@ -39,6 +40,11 @@ pub struct Args {
     /// Directory of the static web client
     #[arg(long, default_value = "web")]
     pub web_dir: String,
+
+    /// Create the virtual gamepad and sweep it for ~8s, then exit (no server).
+    /// For verifying uinput access without a browser/controller.
+    #[arg(long)]
+    pub gamepad_selftest: bool,
 }
 
 #[tokio::main]
@@ -50,9 +56,13 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    gstreamer::init()?;
-
     let args = Args::parse();
+
+    if args.gamepad_selftest {
+        return gamepad::selftest();
+    }
+
+    gstreamer::init()?;
     let addr: SocketAddr = args.bind.parse()?;
     signaling::serve(addr, args).await
 }

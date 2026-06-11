@@ -22,6 +22,34 @@ in [`ROADMAP.md`](./ROADMAP.md) — **read it first**.
 (`gstreamer-rs`).** All pipeline code lives in `src/` (a Cargo binary). Do not
 reintroduce Pion/aiortc.
 
+**Stage 3 (make it feel good) — DONE (2026-06-11).** User picked latency,
+gamepad, reconnect+bitrate; **audio deferred**.
+- **Latency tuning:** `vah264enc target-usage=7`, `webrtcbin latency=40` (from the
+  200 ms default), browser sets the video receiver's `playoutDelayHint=0`.
+  Measured jitter-buffer ~9 ms, smooth 60 fps. (`fps` in `getStats` reads low on a
+  *static* screen — it counts rendered frames; it climbs to 60 under motion.)
+- **Gamepad:** browser Gamepad API (`web/main.js`, polled via rAF, no Pointer
+  Lock needed → works on mobile + BT controller) → `{t:"g",a,b}` on the data
+  channel → `src/gamepad.rs` injects a **uinput virtual "Microsoft X-Box 360 pad"**
+  (`evdev` crate, VID/PID 0x045e/0x028e, ABS X/Y/RX/RY/Z/RZ/HAT0X/Y + BTN_*) on its
+  own thread, created lazily on first event. Gamepads go via **uinput, not XTEST**
+  (XTEST can't fake a joystick) — and uinput joysticks are visible to SDL games
+  even under Xvfb. Verify headlessly with `arcadia --gamepad-selftest` + `jstest`.
+- **Reconnect + bitrate:** `web/main.js` auto-reconnects with capped backoff
+  (server already builds a fresh pipeline per WS). Bitrate adaptation is a
+  **browser-side AIMD heuristic** (loss>2% → ×0.85; loss<0.5% → +500 kbps, cap
+  15 Mbps) sent as `{t:"r",kbps}`; server clamps (1–20 Mbps) and sets
+  `vah264enc bitrate` live. (No `rtpgccbwe`/GCC — it's only in `gst-plugins-rs`.)
+
+**Stage-3 gotchas:**
+- **uinput needs a udev rule + `input` group.** `/dev/uinput` is `root:root 0600`;
+  rule `/etc/udev/rules.d/99-uinput.rules` = `KERNEL=="uinput", GROUP="input",
+  MODE="0660"`, `usermod -aG input cwnelson`. **Order matters:** create the rule
+  *before* `udevadm trigger`; the static `/dev/uinput` node may not pick up the
+  rule on trigger alone — `modprobe -r uinput && modprobe uinput` recreates it as
+  `root:input 0660`. Group membership needs a fresh login (each `ssh`/`cargo run`
+  is fresh, so it applies). Host tools: `joystick` (`jstest`), `evtest`.
+
 **Stage 2 (input round-trip → playable) — DONE (2026-06-11).** Browser captures
 keyboard + mouse and sends events over a WebRTC **data channel**; the server
 injects them into the headless X display via **X11 XTEST** (`x11rb`, in-process,

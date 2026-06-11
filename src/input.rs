@@ -36,6 +36,19 @@ pub enum InputEvent {
     Button { button: u8, down: bool },
     /// Wheel: -1 = up, +1 = down (sign of `deltaY`).
     Wheel { dir: i8 },
+    /// Full gamepad state snapshot (routed to the uinput injector, not XTEST).
+    Gamepad(GamepadState),
+    /// Adaptive-bitrate request from the browser (kbps); applied to the encoder.
+    Bitrate { kbps: u32 },
+}
+
+/// A snapshot of a browser Gamepad (W3C "standard" mapping). `axes` is
+/// `[leftX, leftY, rightX, rightY]` in −1..1; `buttons` are `.value` floats
+/// (digital 0/1, triggers 0..1) indexed by the standard layout.
+#[derive(Debug, Clone)]
+pub struct GamepadState {
+    pub axes: [f32; 4],
+    pub buttons: Vec<f32>,
 }
 
 impl InputEvent {
@@ -56,6 +69,23 @@ impl InputEvent {
             }),
             "w" => Some(InputEvent::Wheel {
                 dir: if v.get("dy")?.as_f64()? < 0.0 { -1 } else { 1 },
+            }),
+            "g" => {
+                let a = v.get("a")?.as_array()?;
+                let mut axes = [0.0f32; 4];
+                for (i, slot) in axes.iter_mut().enumerate() {
+                    *slot = a.get(i).and_then(Value::as_f64).unwrap_or(0.0) as f32;
+                }
+                let buttons = v
+                    .get("b")?
+                    .as_array()?
+                    .iter()
+                    .map(|x| x.as_f64().unwrap_or(0.0) as f32)
+                    .collect();
+                Some(InputEvent::Gamepad(GamepadState { axes, buttons }))
+            }
+            "r" => Some(InputEvent::Bitrate {
+                kbps: v.get("kbps")?.as_u64()? as u32,
             }),
             _ => None,
         }
@@ -160,6 +190,9 @@ impl Injector {
                 self.fake(BUTTON_PRESS_EVENT, btn, 0, 0)?;
                 self.fake(BUTTON_RELEASE_EVENT, btn, 0, 0)?;
             }
+            // Gamepad/Bitrate are handled elsewhere (uinput injector / encoder),
+            // never on the XTEST path.
+            InputEvent::Gamepad(_) | InputEvent::Bitrate { .. } => {}
         }
         self.conn.flush()?;
         Ok(())

@@ -11,12 +11,20 @@ de-risk the hardware and set a latency target to beat.)
 
 ## Status
 
+**Stage 3 (make it feel good) — DONE (2026-06-11).** Three improvements (audio
+deferred): **latency tuning** (`vah264enc target-usage=7`, `webrtcbin latency=40`,
+browser `playoutDelayHint=0` → jitter-buffer ~9 ms, smooth 60 fps); **gamepad**
+(browser Gamepad API → data channel → a uinput virtual Xbox-360 pad, so SDL games
+auto-map it — works on mobile + a Bluetooth controller too); and **reconnect +
+adaptive bitrate** (client auto-reconnect with backoff; a loss-feedback AIMD loop
+nudges the encoder bitrate, since `rtpgccbwe` isn't packaged). Next: Stage 4
+(cluster-native / gamescope). See [`ROADMAP.md`](./ROADMAP.md).
+
 **Stage 2 (input round-trip → playable) — DONE (2026-06-11).** The browser
 captures keyboard + mouse (Pointer Lock for relative mouse-look) and sends events
 over a **WebRTC data channel**; the server injects them into the headless X
 display via **XTEST** (`x11rb`), so apps respond. Verified: typed keys land in an
-`xterm`, and `xeyes` tracks the mouse. It's playable. Next: Stage 3 (audio,
-gamepad, latency tuning). See [`ROADMAP.md`](./ROADMAP.md).
+`xterm`, and `xeyes` tracks the mouse. It's playable.
 
 **Stage 1 (one-way video) — DONE (2026-06-10).** A Rust binary
 (`cargo run -- --source test|x11`) captures a source, hardware-encodes it to
