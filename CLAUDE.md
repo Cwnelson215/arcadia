@@ -61,9 +61,10 @@ Steam (Big Picture, logged in) both stream and take keyboard/mouse/gamepad input
 
   **Host setup (non-persistent — re-do after reboot unless made a service):**
   ```
-  # Display/GPU stack + RetroArch are all in trixie `main`:
+  # Display/GPU stack + RetroArch are all in trixie `main`. `xdotool` is used by
+  # the launcher's `fit_window` to clamp oversized windows (Steam Big Picture).
   sudo apt install -y xserver-xorg xserver-xorg-video-amdgpu \
-       mesa-utils vulkan-tools libvulkan1 mesa-vulkan-drivers retroarch
+       mesa-utils vulkan-tools libvulkan1 mesa-vulkan-drivers retroarch xdotool
   # Steam (non-free, needs the i386 arch) — Debian's package is `steam-installer`.
   # bulbasaur's trixie sources ship only `main non-free-firmware`, so add non-free:
   sudo sed -i 's/main non-free-firmware/main contrib non-free non-free-firmware/' /etc/apt/sources.list
@@ -132,6 +133,19 @@ Steam (Big Picture, logged in) both stream and take keyboard/mouse/gamepad input
     `videoconvert` → GPU `vapostproc` (VAMemory NV12) in `src/pipeline.rs`.
     (uinput needs `/dev/uinput` writable — udev rule + `input` group, already set
     up in Stage 3.)
+  - **Steam Big Picture window overflow (2026-06-11):** Big Picture (`-gamepadui`,
+    the Steam Deck UI) opens a **fixed 1280×800** window — the Deck's native 16:10
+    resolution — regardless of the display mode (`xrandr` shows `:99` still at
+    1280×720; Steam does **not** mode-switch, so restricting the Xorg mode list is a
+    non-fix). With no WM to constrain it, the bottom 80px falls off the 1280×720
+    framebuffer and is never captured (reads as the UI's edges being cut off). Fix:
+    the per-game **`fit_window`** field in `games.toml` (`= "Steam Big Picture"`).
+    The launcher (`src/launcher.rs` `fit_window_async`) polls via **`xdotool`** for
+    ~30s after launch and resizes/moves the matching window to 1280×720+0+0;
+    steamwebhelper (CEF) reflows the Deck UI to fit. Needs `xdotool` on the host
+    (in the Stage-4 apt line). If CEF ever stops reflowing, the fallback is a
+    1280×800 Xorg modeline + client letterbox (`<video>` already `object-fit:
+    contain`).
   - **Cursor (2026-06-11):** the captured X cursor is shown only while the browser
     holds pointer lock — `web/main.js` sends `{t:"c",on}` on `pointerlockchange`
     and `src/pipeline.rs` toggles `ximagesrc cap.show-pointer` live (named element

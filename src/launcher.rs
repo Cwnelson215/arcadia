@@ -21,10 +21,11 @@ use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use tracing::{info, warn};
 
-/// Gamescope output size when a game opts into the nested wrap. Matches the
-/// capture display resolution so the encoder sees a full frame.
-const GAMESCOPE_W: &str = "1280";
-const GAMESCOPE_H: &str = "720";
+/// The capture display resolution. Shared by the gamescope wrap (its `-W/-H`
+/// output size) and the `fit_window` resize, so both clamp to the same frame the
+/// encoder captures.
+const CAPTURE_W: &str = "1280";
+const CAPTURE_H: &str = "720";
 
 /// One launchable entry, parsed from a `[[game]]` table in the config file.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -50,6 +51,13 @@ pub struct Game {
     /// Extra gamescope flags, used only when `gamescope = true`.
     #[serde(default)]
     pub gamescope_args: Vec<String>,
+    /// If set, after launch, resize the top-level window whose name matches this
+    /// substring to the capture resolution at +0+0. Fixes apps (e.g. Steam Big
+    /// Picture, which opens a fixed 1280x800 Deck-UI window) that create a window
+    /// larger than the capture display — with no window manager on `:99` nothing
+    /// else constrains it, so the overflow falls off the framebuffer.
+    #[serde(default)]
+    pub fit_window: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -151,6 +159,9 @@ impl Launcher {
             game.command,
             if game.gamescope { " via gamescope" } else { "" }
         );
+        if let Some(match_name) = game.fit_window.clone() {
+            fit_window_async(self.display.clone(), match_name);
+        }
         *cur = Some(Running {
             id: game.id.clone(),
             child,
@@ -204,9 +215,9 @@ impl Launcher {
             // gamescope -W <w> -H <h> -f [extra...] -- <command> [args...]
             let mut gs = vec![
                 "-W".to_string(),
-                GAMESCOPE_W.to_string(),
+                CAPTURE_W.to_string(),
                 "-H".to_string(),
-                GAMESCOPE_H.to_string(),
+                CAPTURE_H.to_string(),
                 "-f".to_string(),
             ];
             gs.extend(game.gamescope_args.iter().cloned());
@@ -249,6 +260,50 @@ fn kill_and_reap(mut running: Running) {
     let _ = running.child.wait();
 }
 
+/// Clamp a freshly-launched game's window to the capture display.
+///
+/// Some apps (Steam Big Picture opens a fixed 1280x800 Deck-UI window) create a
+/// window bigger than the capture framebuffer; with no window manager on `:99`,
+/// the overflow falls off-screen and is never captured. This spawns a detached,
+/// bounded poll loop that resizes/moves the matching top-level window to the
+/// capture resolution at +0+0 via `xdotool`. CEF/Chromium apps (steamwebhelper)
+/// reflow their UI to the new window size, so nothing is clipped.
+///
+/// The loop both waits out the app's multi-second boot and re-asserts the size a
+/// few times in case the app relays out and snaps back. It is best-effort: a
+/// missing window (not booted yet, or already stopped) is a no-op and the loop
+/// retries, then exits on its own — it is not tied to the child's lifetime.
+fn fit_window_async(disp: String, match_name: String) {
+    std::thread::spawn(move || {
+        // ~30s budget: 40 tries × 750ms. Cheap (one short-lived xdotool per try).
+        // (`display` is a reserved tracing field name — hence `disp`.)
+        info!("fit_window: watching for window matching '{match_name}' on {disp}");
+        for _ in 0..40 {
+            let _ = Command::new("xdotool")
+                .args([
+                    "search",
+                    "--name",
+                    &match_name,
+                    "windowsize",
+                    "%@",
+                    CAPTURE_W,
+                    CAPTURE_H,
+                    "windowmove",
+                    "%@",
+                    "0",
+                    "0",
+                ])
+                .env("DISPLAY", &disp)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+            std::thread::sleep(std::time::Duration::from_millis(750));
+        }
+        info!("fit_window: done watching for '{match_name}'");
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -275,6 +330,7 @@ mod tests {
             name = "Steam"
             command = "steam"
             gamescope = true
+            fit_window = "Steam Big Picture"
             "#,
         );
         let l = Launcher::load(f.path().to_str().unwrap(), ":99").unwrap();
@@ -285,10 +341,12 @@ mod tests {
         assert_eq!(games[0].command, "retroarch");
         assert_eq!(games[0].args, vec!["-f".to_string()]);
         assert!(!games[0].gamescope); // defaults to false
+        assert_eq!(games[0].fit_window, None); // omitted -> default None
 
         assert_eq!(games[1].id, "steam");
         assert!(games[1].gamescope);
         assert!(games[1].args.is_empty()); // omitted -> default empty
+        assert_eq!(games[1].fit_window.as_deref(), Some("Steam Big Picture"));
     }
 
     #[test]

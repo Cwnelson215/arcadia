@@ -13,6 +13,8 @@
 #   env             optional  extra environment variables (table)
 #   gamescope       optional  wrap in `gamescope -W 1280 -H 720 -f -- <command>`
 #   gamescope_args  optional  extra gamescope flags (only when gamescope = true)
+#   fit_window      optional  after launch, resize the top-level window whose name
+#                             matches this substring to 1280x720+0+0 (needs xdotool)
 #
 # Tip: bring a new game up WITHOUT gamescope first to isolate variables, then
 # flip `gamescope = true` once it streams and controls cleanly.
@@ -28,12 +30,17 @@ command = "glxgears"
 # Steam Big Picture / gamepad UI. First run needs a one-time interactive Steam
 # login (do it through the stream or a local session). Recommended end state is
 # `gamescope = true`; left false here so it's verified bare first.
+#
+# Big Picture opens a fixed 1280x800 (Steam Deck native) window, so its bottom
+# 80px falls off the 1280x720 capture display. `fit_window` resizes it back to the
+# capture size after launch (steamwebhelper/CEF reflows the Deck UI to fit).
 [[game]]
 id = "steam"
 name = "Steam (Big Picture)"
 command = "steam"
 args = ["-gamepadui"]
 gamescope = false
+fit_window = "Steam Big Picture"
 
 # RetroArch — opens its menu; load cores/ROMs from there, or pin a specific ROM
 # by setting args, e.g.:
