@@ -1,0 +1,36 @@
+# systemd *user* service for the arcadia session. Running it as a user service
+# (not system) means CI can `systemctl --user restart arcadia` over SSH with no
+# sudo — bulbasaur's sudo-over-SSH needs a password, which can't be automated.
+#
+# The CI deploy job (.github/workflows/ci.yml) restarts this after building.
+# run-session.sh brings up the accelerated Xorg :99, ensures the PulseAudio
+# `arcadia` sink, and execs arcadia in the foreground; systemd supervises it.
+# A restart tears down the whole session cgroup (arcadia + the Xorg/games it
+# started) and brings it back up — run-session.sh re-creates Xorg if needed.
+#
+# One-time install on bulbasaur (after the first sync put the repo at ~/arcadia):
+#
+#   mkdir -p ~/.config/systemd/user
+#   cp ~/arcadia/deploy/arcadia.service ~/.config/systemd/user/arcadia.service
+#   loginctl enable-linger cwnelson          # run the user manager without a login session
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now arcadia    # start now + on boot
+#
+# Tail logs with:  journalctl --user -u arcadia -f
+
+[Unit]
+Description=arcadia cloud-gaming session (Xorg :99 + capture/encode/WebRTC)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/arcadia
+ExecStart=%h/arcadia/scripts/run-session.sh
+Restart=on-failure
+RestartSec=3
+# Let Xorg/PulseAudio/games wind down on stop before SIGKILL.
+TimeoutStopSec=15
+
+[Install]
+WantedBy=default.target

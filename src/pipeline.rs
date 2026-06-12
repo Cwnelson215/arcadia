@@ -161,21 +161,23 @@ pub async fn run_session(socket: WebSocket, args: Arc<Args>) -> Result<()> {
     result
 }
 
-fn build_pipeline(
-    args: &Args,
-    out_tx: mpsc::UnboundedSender<String>,
-) -> Result<(gst::Pipeline, gst::Element)> {
+/// Build the GStreamer pipeline *description string* from the CLI args. Pure
+/// (no GStreamer objects, no I/O) so it's unit-testable off the target hardware
+/// — the capture/encode elements themselves only validate at runtime on
+/// bulbasaur. Returns an error for unknown `--source` / `--audio` values.
+fn build_pipeline_desc(args: &Args) -> Result<String> {
     let source_chain = match args.source.as_str() {
-        "test" => {
+        "test" => format!(
             "videotestsrc is-live=true pattern=smpte \
              ! timeoverlay halignment=right valignment=bottom font-desc=\"Sans 36\" \
-             ! video/x-raw,width=1280,height=720,framerate=60/1"
-                .to_string()
-        }
+             ! video/x-raw,width=1280,height=720,framerate={fps}/1",
+            fps = args.fps
+        ),
         "x11" => format!(
             "ximagesrc display-name={} use-damage=false show-pointer=false name=cap \
-             ! video/x-raw,framerate=60/1",
-            args.display
+             ! video/x-raw,framerate={fps}/1",
+            args.display,
+            fps = args.fps
         ),
         other => bail!("unknown --source {other} (use: test | x11)"),
     };
@@ -205,19 +207,35 @@ fn build_pipeline(
     // `gst-inspect-1.0 vah264enc` on bulbasaur. Renoir's VAProfileH264ConstrainedBaseline
     // (verified in Stage 0) is the broadest for cross-browser WebRTC decode; if the
     // profile caps fail to negotiate, fall back to `profile=main`.
+    //
+    // GOP = fps gives a 1-second keyframe interval. Over the WAN, a longer GOP
+    // means fewer large IDR bursts (smoother, fewer bandwidth spikes) — acceptable
+    // because NACK/RTX (set on the transceiver below) recovers isolated loss
+    // without waiting for the next keyframe. If RTX proves unavailable, shorten the
+    // GOP toward fps/2 so PLI-driven recovery is quicker.
     let desc = format!(
         "{source} \
          ! vapostproc ! video/x-raw(memory:VAMemory),format=NV12 \
-         ! vah264enc name=enc rate-control=cbr bitrate={bitrate} key-int-max=30 b-frames=0 \
+         ! vah264enc name=enc rate-control=cbr bitrate={bitrate} key-int-max={gop} b-frames=0 \
            target-usage=7 \
          ! video/x-h264,profile=constrained-baseline ! h264parse \
          ! rtph264pay pt=96 config-interval=-1 aggregate-mode=zero-latency mtu=1200 \
          ! application/x-rtp,media=video,encoding-name=H264,payload=96 \
-         ! webrtcbin name=sendrecv bundle-policy=max-bundle latency=40{audio}",
+         ! webrtcbin name=sendrecv bundle-policy=max-bundle latency={latency}{audio}",
         source = source_chain,
         bitrate = args.bitrate,
+        gop = args.fps,
+        latency = args.latency,
         audio = audio_chain,
     );
+    Ok(desc)
+}
+
+fn build_pipeline(
+    args: &Args,
+    out_tx: mpsc::UnboundedSender<String>,
+) -> Result<(gst::Pipeline, gst::Element)> {
+    let desc = build_pipeline_desc(args)?;
     info!("gstreamer pipeline:\n  {desc}");
 
     let pipeline = gst::parse::launch(&desc)
@@ -231,6 +249,19 @@ fn build_pipeline(
 
     // No external STUN — Tailscale provides a direct host ICE candidate.
     webrtc.set_property_from_str("stun-server", "");
+
+    // Resilience over the WAN: enable NACK-based retransmission (RTX) on the video
+    // transceiver (index 0 — video is the first m-line) so isolated packet loss
+    // recovers without forcing a full-keyframe (PLI) stall. Chrome offers
+    // `a=rtcp-fb:96 nack` + an RTX apt line by default for H.264, so the answerer
+    // engages. The encoder→webrtcbin link created the transceiver during
+    // parse::launch, so it exists here pre-negotiation.
+    let video_transceiver = webrtc
+        .emit_by_name::<Option<gst_webrtc::WebRTCRTPTransceiver>>("get-transceiver", &[&0i32]);
+    match video_transceiver {
+        Some(t) => t.set_property("do-nack", true),
+        None => warn!("no video transceiver at index 0 — NACK/RTX not enabled"),
+    }
 
     // on-negotiation-needed -> create + send offer
     let webrtc_weak = webrtc.downgrade();
@@ -338,4 +369,97 @@ fn handle_browser_msg(webrtc: &gst::Element, txt: &str) -> Result<()> {
         other => warn!("ignoring signaling msg of type {other:?}"),
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    fn args(extra: &[&str]) -> Args {
+        let mut argv = vec!["arcadia"];
+        argv.extend_from_slice(extra);
+        Args::try_parse_from(argv).expect("parse args")
+    }
+
+    #[test]
+    fn x11_source_captures_named_display() {
+        let desc = build_pipeline_desc(&args(&["--source", "x11", "--display", ":99"])).unwrap();
+        assert!(desc.contains("ximagesrc display-name=:99"));
+        assert!(desc.contains("name=cap"));
+        assert!(!desc.contains("videotestsrc"));
+    }
+
+    #[test]
+    fn test_source_uses_videotestsrc() {
+        let desc = build_pipeline_desc(&args(&["--source", "test"])).unwrap();
+        assert!(desc.contains("videotestsrc"));
+    }
+
+    #[test]
+    fn unknown_source_is_error() {
+        assert!(build_pipeline_desc(&args(&["--source", "webcam"])).is_err());
+    }
+
+    /// Regression guard for the Stage-1 Tailscale-MTU gotcha: `tailscale0` has a
+    /// 1280-byte MTU, so the RTP payloader MUST stay at `mtu=1200` or keyframes
+    /// fragment and never reassemble (black video). Don't let this drift.
+    #[test]
+    fn rtp_mtu_pinned_to_1200() {
+        let desc = build_pipeline_desc(&args(&["--source", "x11"])).unwrap();
+        assert!(desc.contains("mtu=1200"), "RTP mtu must stay 1200 over Tailscale");
+    }
+
+    /// fps/latency must flow from the CLI into the pipeline (the Stage-3 tuning).
+    #[test]
+    fn fps_and_latency_are_parameterized() {
+        let desc =
+            build_pipeline_desc(&args(&["--source", "x11", "--fps", "90", "--latency", "55"]))
+                .unwrap();
+        assert!(desc.contains("framerate=90/1"));
+        assert!(desc.contains("key-int-max=90")); // GOP = fps
+        assert!(desc.contains("latency=55"));
+    }
+
+    #[test]
+    fn encoder_params_present() {
+        let desc = build_pipeline_desc(&args(&["--source", "test", "--bitrate", "9000"])).unwrap();
+        assert!(desc.contains("profile=constrained-baseline"));
+        assert!(desc.contains("bitrate=9000"));
+        assert!(desc.contains("key-int-max="));
+    }
+
+    #[test]
+    fn audio_none_has_no_audio_branch() {
+        let desc = build_pipeline_desc(&args(&["--source", "test", "--audio", "none"])).unwrap();
+        assert!(!desc.contains("sendrecv."));
+        assert!(!desc.contains("OPUS"));
+    }
+
+    #[test]
+    fn audio_test_adds_tone_branch() {
+        let desc = build_pipeline_desc(&args(&["--source", "test", "--audio", "test"])).unwrap();
+        assert!(desc.contains("audiotestsrc"));
+        assert!(desc.contains("sendrecv."));
+    }
+
+    #[test]
+    fn audio_pulse_captures_named_device() {
+        let desc = build_pipeline_desc(&args(&[
+            "--source",
+            "test",
+            "--audio",
+            "pulse",
+            "--audio-device",
+            "arcadia.monitor",
+        ]))
+        .unwrap();
+        assert!(desc.contains("pulsesrc device=arcadia.monitor"));
+        assert!(desc.contains("sendrecv."));
+    }
+
+    #[test]
+    fn unknown_audio_is_error() {
+        assert!(build_pipeline_desc(&args(&["--source", "test", "--audio", "flac"])).is_err());
+    }
 }

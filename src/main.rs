@@ -42,6 +42,21 @@ pub struct Args {
     #[arg(long, default_value_t = 15000)]
     pub bitrate: u32,
 
+    /// Capture + encode framerate (fps). 60 is the safe default; 90/120 need a
+    /// matching Xorg modeline at that refresh (see CLAUDE.md / xorg-arcadia.conf).
+    #[arg(long, default_value_t = 60)]
+    pub fps: u32,
+
+    /// webrtcbin jitter-buffer latency in ms. 40 is the WAN-safe default; lower
+    /// trims latency but risks stutter on a jittery path. Don't go below ~30.
+    #[arg(long, default_value_t = 40)]
+    pub latency: u32,
+
+    /// Seconds of no viewers before the running game is frozen (SIGSTOP) to free
+    /// the GPU. Resumes instantly on reconnect. 0 disables idle spin-down.
+    #[arg(long, default_value_t = 120)]
+    pub idle_timeout: u32,
+
     /// Address to bind the web + signaling server
     #[arg(long, default_value = "0.0.0.0:8080")]
     pub bind: String,

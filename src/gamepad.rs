@@ -165,3 +165,50 @@ fn apply(d: &mut VirtualDevice, s: &GamepadState) -> Result<()> {
     d.emit(&ev).context("emitting gamepad events")?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scale_stick_endpoints_and_center() {
+        assert_eq!(scale_stick(-1.0), STICK_MIN);
+        assert_eq!(scale_stick(1.0), STICK_MAX);
+        // Center maps to ~0 (rounding lands within one LSB of the half-range).
+        assert!(scale_stick(0.0).abs() <= 1);
+        // Out-of-range inputs clamp rather than overshoot the axis range.
+        assert_eq!(scale_stick(-5.0), STICK_MIN);
+        assert_eq!(scale_stick(5.0), STICK_MAX);
+    }
+
+    #[test]
+    fn scale_trig_range() {
+        assert_eq!(scale_trig(0.0), 0);
+        assert_eq!(scale_trig(1.0), TRIG_MAX);
+        assert_eq!(scale_trig(0.5), 128); // 0.5 * 255 = 127.5 -> 128
+        assert_eq!(scale_trig(-1.0), 0); // clamps low
+        assert_eq!(scale_trig(2.0), TRIG_MAX); // clamps high
+    }
+
+    #[test]
+    fn pressed_threshold_at_half() {
+        let buttons = [0.0, 0.4, 0.6, 1.0];
+        assert_eq!(pressed(&buttons, 0), 0);
+        assert_eq!(pressed(&buttons, 1), 0);
+        assert_eq!(pressed(&buttons, 2), 1);
+        assert_eq!(pressed(&buttons, 3), 1);
+        // Missing index is treated as released, not a panic.
+        assert_eq!(pressed(&buttons, 99), 0);
+    }
+
+    #[test]
+    fn btn_map_covers_standard_face_and_system_buttons() {
+        let indices: Vec<usize> = BTN_MAP.iter().map(|(i, _)| *i).collect();
+        for i in [0, 1, 2, 3, 4, 5, 8, 9, 10, 11, 16] {
+            assert!(indices.contains(&i), "BTN_MAP missing W3C index {i}");
+        }
+        // A/B/X/Y are the first four entries, in order.
+        assert_eq!(BTN_MAP[0].1, Key::BTN_SOUTH);
+        assert_eq!(BTN_MAP[1].1, Key::BTN_EAST);
+    }
+}

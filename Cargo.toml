@@ -21,3 +21,13 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 futures-util = "0.3"
 evdev = "0.12"
+libc = "0.2"
+
+[dev-dependencies]
+# Temp games.toml fixtures for launcher + signaling tests.
+tempfile = "3"
+# `oneshot` for the in-process /api/games handler test (tower-http is already a
+# runtime dep; this adds the ServiceExt test util). http-body-util collects the
+# response body. Both versions already resolved transitively in Cargo.lock.
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"

@@ -253,9 +253,13 @@ network RTT, for both `--source test` (videotestsrc) and `--source x11`
 - Pipeline: `<source> ! videoconvert ! NV12 ! vah264enc rate-control=cbr
   bitrate=15000 key-int-max=30 b-frames=0 ! constrained-baseline ! h264parse !
   rtph264pay config-interval=-1 mtu=1200 ! webrtcbin`.
-- Dev loop: edit on workstation → `scripts/sync.sh` (tar-over-ssh; **bulbasaur
-  has no `rsync`**) → `cargo run` on bulbasaur. Encode+capture are host-specific;
-  never validate on the workstation.
+- Dev loop / deploy: push to `main` → GitHub Actions (`.github/workflows/ci.yml`)
+  runs clippy+build on a runner, then joins the tailnet and syncs+builds+restarts
+  on bulbasaur over Tailscale SSH (the `arcadia` systemd **user** service, unit at
+  `deploy/arcadia.service`). For ad-hoc manual syncs (bulbasaur has **no `rsync`**):
+  `tar czf - --exclude=.git --exclude=target . | ssh cwnelson@bulbasaur 'tar xzf - -C arcadia'`,
+  then `cargo run` there. Encode+capture are host-specific; never validate on the
+  workstation.
 
 **⚠️ The Stage-1 gotcha that cost the most time — Tailscale MTU.** `tailscale0`
 has a **1280-byte MTU**, but `rtph264pay` defaults to `mtu=1400`. Large keyframe

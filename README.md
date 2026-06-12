@@ -43,7 +43,8 @@ encode via VA-API (`radeonsi`); ffmpeg drove a `h264_vaapi` test encode; and
 
 ## Run it
 
-On bulbasaur (after `scripts/sync.sh` from the workstation):
+On bulbasaur (push to `main` deploys via GitHub Actions; for a manual sync:
+`tar czf - --exclude=.git --exclude=target . | ssh cwnelson@bulbasaur 'tar xzf - -C arcadia'`):
 
 ```bash
 cargo run -- --source test                 # synthetic test pattern

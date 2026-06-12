@@ -16,6 +16,7 @@
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use tracing::{info, warn};
@@ -60,6 +61,8 @@ struct GamesConfig {
 struct Running {
     id: String,
     child: Child,
+    /// True while the process group is SIGSTOP'd by the idle spin-down.
+    suspended: bool,
 }
 
 /// The launcher: an immutable game list plus the one currently-running child.
@@ -151,8 +154,39 @@ impl Launcher {
         *cur = Some(Running {
             id: game.id.clone(),
             child,
+            suspended: false,
         });
         Ok(())
+    }
+
+    /// Freeze the running game's process group (SIGSTOP) so it does no CPU/GPU
+    /// work while no viewer is connected. Idempotent and a no-op when nothing is
+    /// running. The child was started as its own process-group leader (see
+    /// `spawn`), so signaling the group catches the game and its children.
+    pub fn suspend(&self) {
+        let mut cur = self.current.lock().unwrap();
+        if let Some(r) = cur.as_mut() {
+            if !r.suspended {
+                // SAFETY: a plain libc signal to the child's process group.
+                unsafe { libc::killpg(r.child.id() as libc::pid_t, libc::SIGSTOP) };
+                r.suspended = true;
+                info!("froze game '{}' (idle spin-down)", r.id);
+            }
+        }
+    }
+
+    /// Resume a frozen game (SIGCONT). Idempotent; a no-op if not suspended or
+    /// nothing is running.
+    pub fn resume(&self) {
+        let mut cur = self.current.lock().unwrap();
+        if let Some(r) = cur.as_mut() {
+            if r.suspended {
+                // SAFETY: a plain libc signal to the child's process group.
+                unsafe { libc::killpg(r.child.id() as libc::pid_t, libc::SIGCONT) };
+                r.suspended = false;
+                info!("resumed game '{}' (viewer connected)", r.id);
+            }
+        }
     }
 
     /// Stop the current game, if any.
@@ -197,6 +231,9 @@ impl Launcher {
         }
         // Detach stdin; let stdout/stderr inherit so game logs land in arcadia's.
         cmd.stdin(Stdio::null());
+        // Own process group (pgid == child pid) so the idle spin-down can
+        // SIGSTOP/SIGCONT the whole game subtree, not just the parent.
+        cmd.process_group(0);
 
         cmd.spawn()
             .with_context(|| format!("spawning '{program}' (is it installed and on PATH?)"))
@@ -210,4 +247,60 @@ fn kill_and_reap(mut running: Running) {
         warn!("killing game '{}': {e}", running.id);
     }
     let _ = running.child.wait();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    fn write_config(contents: &str) -> tempfile::NamedTempFile {
+        let mut f = tempfile::NamedTempFile::new().expect("create temp file");
+        f.write_all(contents.as_bytes()).expect("write config");
+        f
+    }
+
+    #[test]
+    fn loads_valid_games() {
+        let f = write_config(
+            r#"
+            [[game]]
+            id = "retroarch"
+            name = "RetroArch"
+            command = "retroarch"
+            args = ["-f"]
+
+            [[game]]
+            id = "steam"
+            name = "Steam"
+            command = "steam"
+            gamescope = true
+            "#,
+        );
+        let l = Launcher::load(f.path().to_str().unwrap(), ":99").unwrap();
+        let games = l.games();
+        assert_eq!(games.len(), 2);
+
+        assert_eq!(games[0].id, "retroarch");
+        assert_eq!(games[0].command, "retroarch");
+        assert_eq!(games[0].args, vec!["-f".to_string()]);
+        assert!(!games[0].gamescope); // defaults to false
+
+        assert_eq!(games[1].id, "steam");
+        assert!(games[1].gamescope);
+        assert!(games[1].args.is_empty()); // omitted -> default empty
+    }
+
+    #[test]
+    fn missing_file_is_empty_not_error() {
+        // The documented video-only fallback: a missing config is tolerated.
+        let l = Launcher::load("/no/such/path/games.toml", ":99").unwrap();
+        assert!(l.games().is_empty());
+    }
+
+    #[test]
+    fn malformed_toml_is_error() {
+        let f = write_config("this is = not valid toml [[[");
+        assert!(Launcher::load(f.path().to_str().unwrap(), ":99").is_err());
+    }
 }

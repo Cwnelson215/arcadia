@@ -342,3 +342,129 @@ fn build_keymap() -> HashMap<String, Key> {
     }
     m
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_key_event() {
+        let e = InputEvent::from_json(r#"{"t":"k","code":"KeyW","down":true}"#).unwrap();
+        match e {
+            InputEvent::Key { code, down } => {
+                assert_eq!(code, "KeyW");
+                assert!(down);
+            }
+            other => panic!("expected Key, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_mouse_move_and_clamps() {
+        match InputEvent::from_json(r#"{"t":"m","dx":10,"dy":-5}"#).unwrap() {
+            InputEvent::Mouse { dx, dy } => {
+                assert_eq!(dx, 10);
+                assert_eq!(dy, -5);
+            }
+            other => panic!("expected Mouse, got {other:?}"),
+        }
+        // Out-of-range deltas clamp into i16 rather than wrapping/panicking.
+        match InputEvent::from_json(r#"{"t":"m","dx":1000000,"dy":-1000000}"#).unwrap() {
+            InputEvent::Mouse { dx, dy } => {
+                assert_eq!(dx, i16::MAX);
+                assert_eq!(dy, i16::MIN);
+            }
+            other => panic!("expected Mouse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn maps_js_button_to_x() {
+        // {t:"b",button:0} (JS left) -> X button 1.
+        match InputEvent::from_json(r#"{"t":"b","button":0,"down":true}"#).unwrap() {
+            InputEvent::Button { button, down } => {
+                assert_eq!(button, 1);
+                assert!(down);
+            }
+            other => panic!("expected Button, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn wheel_sign_only() {
+        let up = InputEvent::from_json(r#"{"t":"w","dy":-3}"#).unwrap();
+        let down = InputEvent::from_json(r#"{"t":"w","dy":120}"#).unwrap();
+        assert!(matches!(up, InputEvent::Wheel { dir: -1 }));
+        assert!(matches!(down, InputEvent::Wheel { dir: 1 }));
+    }
+
+    #[test]
+    fn gamepad_tolerates_short_and_extra_arrays() {
+        // Only two axes + one button supplied: missing axes default to 0.0,
+        // and an extra axis past index 3 is ignored.
+        let e =
+            InputEvent::from_json(r#"{"t":"g","a":[0.5,-0.5,0.0,0.0,0.9],"b":[1.0]}"#).unwrap();
+        match e {
+            InputEvent::Gamepad(g) => {
+                assert_eq!(g.axes, [0.5, -0.5, 0.0, 0.0]);
+                assert_eq!(g.buttons, vec![1.0]);
+            }
+            other => panic!("expected Gamepad, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_bitrate_and_capture() {
+        assert!(matches!(
+            InputEvent::from_json(r#"{"t":"r","kbps":8000}"#).unwrap(),
+            InputEvent::Bitrate { kbps: 8000 }
+        ));
+        assert!(matches!(
+            InputEvent::from_json(r#"{"t":"c","on":false}"#).unwrap(),
+            InputEvent::Capture { on: false }
+        ));
+    }
+
+    #[test]
+    fn rejects_malformed_input() {
+        assert!(InputEvent::from_json("{}").is_none());
+        assert!(InputEvent::from_json("not json").is_none());
+        assert!(InputEvent::from_json(r#"{"t":"zzz"}"#).is_none());
+        // Missing required field for the discriminant.
+        assert!(InputEvent::from_json(r#"{"t":"k","code":"KeyW"}"#).is_none());
+    }
+
+    #[test]
+    fn clamp_i16_bounds() {
+        assert_eq!(clamp_i16(None), 0);
+        assert_eq!(clamp_i16(Some(&serde_json::json!(40000))), i16::MAX);
+        assert_eq!(clamp_i16(Some(&serde_json::json!(-40000))), i16::MIN);
+        assert_eq!(clamp_i16(Some(&serde_json::json!(7))), 7);
+    }
+
+    #[test]
+    fn js_and_x_button_maps() {
+        assert_eq!(js_button_to_x(0), 1);
+        assert_eq!(js_button_to_x(1), 2);
+        assert_eq!(js_button_to_x(2), 3);
+        assert_eq!(js_button_to_x(5), 6);
+
+        assert_eq!(x_button_to_btn(1), Some(Key::BTN_LEFT));
+        assert_eq!(x_button_to_btn(2), Some(Key::BTN_MIDDLE));
+        assert_eq!(x_button_to_btn(3), Some(Key::BTN_RIGHT));
+        assert_eq!(x_button_to_btn(4), None);
+    }
+
+    #[test]
+    fn keymap_has_expected_entries() {
+        let m = build_keymap();
+        assert_eq!(m.get("KeyW"), Some(&Key::KEY_W));
+        assert_eq!(m.get("Space"), Some(&Key::KEY_SPACE));
+        assert_eq!(m.get("Enter"), Some(&Key::KEY_ENTER));
+        assert_eq!(m.get("F5"), Some(&Key::KEY_F5));
+        assert_eq!(m.get("Digit0"), Some(&Key::KEY_0));
+        assert!(!m.contains_key("NoSuchKey"));
+        // 26 letters + 10 digits + 12 F-keys + 28 extras.
+        assert_eq!(m.len(), 26 + 10 + 12 + 28);
+    }
+}

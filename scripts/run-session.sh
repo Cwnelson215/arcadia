@@ -20,6 +20,14 @@ DISPLAY_NUM="${DISPLAY_NUM:-:99}"
 # trusted dirs (/etc/X11, ...). The file lives at /etc/X11/xorg-arcadia.conf.
 XORG_CONF="${XORG_CONF:-xorg-arcadia.conf}"
 BIND="${BIND:-0.0.0.0:8080}"
+# Perf knobs (override per-session, e.g. `FPS=90 scripts/run-session.sh`).
+# FPS > 60 needs a matching Xorg modeline at that refresh in xorg-arcadia.conf
+# (see CLAUDE.md). LATENCY is webrtcbin's jitter buffer in ms (40 is WAN-safe).
+# IDLE_TIMEOUT = seconds with no viewer before the running game is frozen
+# (SIGSTOP) to free the GPU; 0 disables.
+FPS="${FPS:-60}"
+LATENCY="${LATENCY:-40}"
+IDLE_TIMEOUT="${IDLE_TIMEOUT:-120}"
 
 # 1. Accelerated Xorg on :99 (GPU-backed via amdgpu, unlike Xvfb).
 if ! pgrep -f "Xorg ${DISPLAY_NUM}" >/dev/null; then
@@ -62,4 +70,5 @@ echo "== launching arcadia on http://100.78.86.4:8080 (capture ${DISPLAY_NUM}) =
 source "$HOME/.cargo/env"
 exec env PULSE_SERVER=127.0.0.1 ./target/debug/arcadia \
   --source x11 --display "${DISPLAY_NUM}" --audio pulse \
-  --games-config games.toml --bind "${BIND}"
+  --games-config games.toml --bind "${BIND}" \
+  --fps "${FPS}" --latency "${LATENCY}" --idle-timeout "${IDLE_TIMEOUT}"

@@ -174,6 +174,8 @@ function startStats() {
 
     // Bitrate adaptation (AIMD on packet loss, since rtpgccbwe isn't available):
     // loss high -> multiplicative decrease; sustained ~0 loss -> additive climb.
+    // Tuned gentle for a jittery WAN: NACK/RTX (server-side) recovers most small
+    // loss, so don't react to baseline loss and don't half-quality on a blip.
     if (line.lost != null && line.recv != null) {
       const dLost = Math.max(0, line.lost - lastLost);
       const dRecv = Math.max(0, line.recv - lastRecv);
@@ -182,7 +184,7 @@ function startStats() {
       if (dRecv > 0) {
         const lossFrac = dLost / (dLost + dRecv);
         const prev = targetKbps;
-        if (lossFrac > 0.02) targetKbps = Math.max(1000, Math.floor(targetKbps * 0.85));
+        if (lossFrac > 0.03) targetKbps = Math.max(1000, Math.floor(targetKbps * 0.9));
         else if (lossFrac < 0.005) targetKbps = Math.min(MAX_KBPS, targetKbps + 500);
         if (Math.abs(targetKbps - prev) >= 250 && inputCh && inputCh.readyState === "open") {
           inputCh.send(JSON.stringify({ t: "r", kbps: targetKbps }));

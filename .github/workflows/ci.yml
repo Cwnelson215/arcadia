@@ -1,0 +1,146 @@
+name: arcadia CI/CD
+
+# Replaces the old scripts/sync.sh dev-loop sync. Two jobs:
+#   verify  — compile + lint on a generic runner (catches Rust errors fast;
+#             the VA-API/ximagesrc hardware paths only validate at runtime on
+#             bulbasaur, so this is a build gate, not a functional test).
+#   deploy  — on push to main: join the tailnet, sync the source to bulbasaur
+#             over Tailscale SSH, build it there (encode/capture are host-
+#             specific), and restart the arcadia systemd *user* service.
+#
+# Required setup (one-time):
+#   * Repo secret  TS_AUTHKEY   — a Tailscale auth key tagged `tag:ci`
+#                                 (same pattern as the other portfolio apps).
+#   * Optional repo variable  BULBASAUR_HOST  — defaults to the tailnet IP below.
+#   * Tailnet ACL ssh rule granting tag:ci → bulbasaur as user `cwnelson`,
+#     action "accept" (tagged nodes can't do interactive "check"). This is what
+#     lets the runner `ssh cwnelson@bulbasaur` with no key.
+#   * On bulbasaur, the arcadia user service installed + lingering enabled
+#     (see deploy/arcadia.service for the exact commands).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # bulbasaur's Tailscale IP; override with a repo variable if it changes.
+  BULBASAUR_HOST: ${{ vars.BULBASAUR_HOST || '100.78.86.4' }}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # gstreamer-sys / -webrtc-sys / -sdp-sys link against these at build time:
+      #   gstreamer-1.0      -> libgstreamer1.0-dev
+      #   gstreamer-sdp-1.0  -> libgstreamer-plugins-base1.0-dev
+      #   gstreamer-webrtc-1.0 -> libgstreamer-plugins-bad1.0-dev
+      - name: Install GStreamer dev stack
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            libgstreamer1.0-dev \
+            libgstreamer-plugins-base1.0-dev \
+            libgstreamer-plugins-bad1.0-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Clippy (deny warnings)
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Build
+        run: cargo build --locked
+
+      # Unit + in-process integration tests over the hardware-independent logic
+      # (input/gamepad parsing, launcher TOML loading, the pipeline description
+      # string, and the /api/games handler). A red test blocks the deploy job
+      # below — the VA-API/X11/uinput runtime paths are still only proven on
+      # bulbasaur by the post-deploy smoke check.
+      - name: Test
+        run: cargo test --locked
+
+  deploy:
+    needs: verify
+    # Only real pushes to main deploy; PRs and manual verify-only runs do not.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # Never let two deploys race on the host.
+    concurrency:
+      group: bulbasaur-deploy
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Join the tailnet
+        uses: tailscale/github-action@v3
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+          # Friendly name for the ephemeral node in the Tailscale admin console.
+          hostname: gha-arcadia
+
+      # Tailscale SSH authenticates the runner by its tag:ci identity (per the
+      # ACL ssh rule) — no SSH key needed. accept-new pins the host cert on
+      # first connect.
+      - name: Sync source to bulbasaur
+        run: |
+          tar czf - --exclude=.git --exclude=target --exclude=node_modules . \
+            | ssh -o StrictHostKeyChecking=accept-new "cwnelson@${BULBASAUR_HOST}" \
+                'mkdir -p arcadia && tar xzf - -C arcadia'
+
+      - name: Build + restart session on bulbasaur
+        run: |
+          ssh -o StrictHostKeyChecking=accept-new "cwnelson@${BULBASAUR_HOST}" bash -s <<'REMOTE'
+          set -euo pipefail
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"   # so `systemctl --user` works over SSH
+          source "$HOME/.cargo/env"
+          cd "$HOME/arcadia"
+          cargo build
+          systemctl --user restart arcadia
+          sleep 2
+          systemctl --user --no-pager --lines=20 status arcadia
+          REMOTE
+
+      # Confirm the push didn't break the live service on bulbasaur. Any failed
+      # assertion exits non-zero (set -euo pipefail) -> the deploy job goes red.
+      - name: Smoke check on bulbasaur
+        run: |
+          ssh -o StrictHostKeyChecking=accept-new "cwnelson@${BULBASAUR_HOST}" bash -s <<'REMOTE'
+          set -euo pipefail
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+
+          # 1. The systemd user service must be up after the restart.
+          systemctl --user is-active --quiet arcadia \
+            || { echo "arcadia service is not active"; systemctl --user --no-pager --lines=40 status arcadia; exit 1; }
+
+          # 2. HTTP health: run-session.sh sleeps ~3s for Xorg before arcadia
+          #    binds :8080, so poll /api/games (no GPU/WebRTC needed) for ~20s.
+          ok=
+          for i in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:8080/api/games >/tmp/arcadia-health.json 2>/dev/null; then
+              ok=1; break
+            fi
+            sleep 1
+          done
+          [ -n "$ok" ] || { echo "arcadia /api/games never came up"; cat /tmp/arcadia-health.json 2>/dev/null; exit 1; }
+          grep -q '"games"' /tmp/arcadia-health.json \
+            || { echo "unexpected /api/games response:"; cat /tmp/arcadia-health.json; exit 1; }
+          echo "OK /api/games: $(cat /tmp/arcadia-health.json)"
+
+          # 3. GPU/display gate: the capture display must be GPU-accelerated
+          #    (radeonsi/AMD), not the llvmpipe software fallback that makes games
+          #    unplayable. vulkaninfo should list the Vega device too.
+          DISPLAY=:99 glxinfo 2>/dev/null | grep -i 'OpenGL renderer' || true
+          DISPLAY=:99 glxinfo 2>/dev/null | grep -iE 'OpenGL renderer.*(radeonsi|AMD)' >/dev/null \
+            || { echo "display :99 is NOT GPU-accelerated (llvmpipe?) — see /tmp/xorg-arcadia.log"; exit 1; }
+          DISPLAY=:99 vulkaninfo 2>/dev/null | grep -i deviceName | head -1 || true
+          echo "smoke check passed"
+          REMOTE
