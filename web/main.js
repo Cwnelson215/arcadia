@@ -554,7 +554,11 @@ for (const el of document.querySelectorAll("#touchpad .tbtn[data-gp]")) {
   el.addEventListener("pointerdown", press);
   el.addEventListener("pointerup", release);
   el.addEventListener("pointercancel", release);
-  el.addEventListener("pointerleave", release);
+  // NOT pointerleave: with setPointerCapture the captured pointer can leave the
+  // button's box while still held (a slightly drifting thumb), and releasing
+  // there would drop a held direction mid-navigation. lostpointercapture is the
+  // safety net for a capture that ends without a pointerup.
+  el.addEventListener("lostpointercapture", release);
 }
 
 // Keyboard-strip buttons (Esc / Enter / Backspace) — tap = down then up.
@@ -572,60 +576,16 @@ for (const el of document.querySelectorAll("#touchpad .tbtn[data-key]")) {
   };
   el.addEventListener("pointerup", clear);
   el.addEventListener("pointercancel", clear);
-  el.addEventListener("pointerleave", clear);
+  el.addEventListener("lostpointercapture", clear);
 }
 
-// Left analog stick — drag the knob; normalize displacement to axes 0/1 (-1..1).
-(() => {
-  const base = $("lstickBase");
-  const knob = $("lstick");
-  if (!base || !knob) return;
-  let active = false;
-  let cx = 0, cy = 0, radius = 1;
-  const reset = (e) => {
-    if (!active) return;
-    if (e) e.stopPropagation();
-    active = false;
-    knob.style.transform = "translate(0px, 0px)";
-    tpad.a[0] = 0;
-    tpad.a[1] = 0;
-    sendTpad();
-  };
-  base.addEventListener("pointerdown", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const r = base.getBoundingClientRect();
-    cx = r.left + r.width / 2;
-    cy = r.top + r.height / 2;
-    radius = r.width / 2;
-    active = true;
-    base.setPointerCapture?.(e.pointerId);
-  });
-  base.addEventListener("pointermove", (e) => {
-    if (!active) return;
-    e.preventDefault();
-    e.stopPropagation();
-    let dx = e.clientX - cx;
-    let dy = e.clientY - cy;
-    const dist = Math.hypot(dx, dy);
-    if (dist > radius) {
-      dx = (dx / dist) * radius;
-      dy = (dy / dist) * radius;
-    }
-    knob.style.transform = `translate(${dx}px, ${dy}px)`;
-    tpad.a[0] = +(dx / radius).toFixed(3);
-    tpad.a[1] = +(dy / radius).toFixed(3); // down = +1 (matches gamepad Y axis)
-    sendTpad();
-  });
-  base.addEventListener("pointerup", reset);
-  base.addEventListener("pointercancel", reset);
-})();
-
 // Visibility: auto-on for touch devices, with a manual toggle persisted to
-// localStorage. Desktop defaults off.
+// localStorage. Desktop defaults off. On touch, the body.mobile class makes the
+// stream fill the viewport (and grow when the phone rotates to landscape).
 const TOUCHPAD_KEY = "arcadia.touchpad";
 const isTouch =
   matchMedia("(hover: none) and (pointer: coarse)").matches || "ontouchstart" in window;
+if (isTouch) document.body.classList.add("mobile");
 function applyTouchpad(on) {
   $("touchpad").classList.toggle("hidden", !on);
   $("touchToggle").classList.toggle("on", on);
