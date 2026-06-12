@@ -13,8 +13,9 @@
 #   env             optional  extra environment variables (table)
 #   gamescope       optional  wrap in `gamescope -W 1280 -H 720 -f -- <command>`
 #   gamescope_args  optional  extra gamescope flags (only when gamescope = true)
-#   fit_window      optional  after launch, resize the top-level window whose name
-#                             matches this substring to 1280x720+0+0 (needs xdotool)
+#   fit_window      optional  after launch, resize any window of this WM_CLASS that
+#                             is larger than the capture display down to it (needs
+#                             xdotool); targets oversized windows like Big Picture
 #
 # Tip: bring a new game up WITHOUT gamescope first to isolate variables, then
 # flip `gamescope = true` once it streams and controls cleanly.
@@ -32,15 +33,20 @@ command = "glxgears"
 # `gamescope = true`; left false here so it's verified bare first.
 #
 # Big Picture opens a fixed 1280x800 (Steam Deck native) window, so its bottom
-# 80px falls off the 1280x720 capture display. `fit_window` resizes it back to the
-# capture size after launch (steamwebhelper/CEF reflows the Deck UI to fit).
+# ~80px falls off the 1280x720 capture display (the menu's news/nav row is clipped;
+# games launch in their own window at full res and are unaffected).
+#
+# DO NOT use `fit_window` here: resizing Steam's Chromium/CEF window from outside —
+# with no window manager on :99 — desyncs its input handling and the stream's
+# keyboard/mouse stop reaching it. We accept the small menu clip to keep input
+# solid. (To eliminate the clip instead, make the :99 display 1280x800 so BP fits
+# natively with no resize — see arcadia/CLAUDE.md.)
 [[game]]
 id = "steam"
 name = "Steam (Big Picture)"
 command = "steam"
 args = ["-gamepadui"]
 gamescope = false
-fit_window = "Steam Big Picture"
 
 # RetroArch — opens its menu; load cores/ROMs from there, or pin a specific ROM
 # by setting args, e.g.:

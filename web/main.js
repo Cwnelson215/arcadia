@@ -293,7 +293,7 @@ function updateHint() {
   const hint = $("hint");
   hint.className = locked ? "locked" : "";
   hint.textContent = locked
-    ? "captured — Esc releases the mouse · use “Back (Esc)” / “Steam ▾” above to send those to the game"
+    ? "captured — Esc releases the mouse · use the “Back (Esc)” button above to send Esc to the game"
     : "click the video to capture mouse + keyboard";
 }
 
@@ -310,12 +310,17 @@ $("fullscreen").addEventListener("click", async () => {
   } catch (e) {}
 });
 
-// On-screen controls for inputs the browser otherwise swallows. The browser
-// consumes the physical Esc key to release pointer lock, so it never reaches the
-// game — and there's no keyboard chord for the Big Picture menu. These buttons
-// inject SYNTHETIC events over the input data channel (server-side uinput), which
-// the browser never sees, so they work over plain HTTP without the Keyboard Lock
-// API. Click them with the mouse free (i.e. after Esc has released the capture).
+// On-screen "Back (Esc)" button. The browser consumes the physical Esc key to
+// release pointer lock, so it never reaches the game; this injects a SYNTHETIC
+// Esc over the input data channel (server-side uinput), which the browser never
+// sees — works over plain HTTP, no Keyboard Lock API. Click it with the mouse
+// free (i.e. after Esc has released the capture).
+//
+// NB: a "Steam menu" button that injected the gamepad Guide button was removed —
+// creating a virtual controller flips Steam Big Picture into controller mode and
+// the keyboard/mouse stop driving the UI (no way to switch back without dropping
+// the controller). For BP, navigate by clicking; a real controller is the clean
+// path for the Guide/Quick-Access menu.
 
 // Tap a key: down now, up shortly after (the host treats a hold as one down).
 function tapKey(code, ms = 80) {
@@ -323,18 +328,7 @@ function tapKey(code, ms = 80) {
   setTimeout(() => sendInput({ t: "k", code, down: false }), ms);
 }
 
-// Tap one W3C-standard gamepad button index on the virtual pad (the host creates
-// the uinput controller lazily on first gamepad event). Index 16 = Guide/Steam,
-// which opens the Big Picture menu.
-function tapGamepadButton(index, ms = 120) {
-  const press = Array.from({ length: 17 }, (_, i) => (i === index ? 1 : 0));
-  const release = new Array(17).fill(0);
-  sendInput({ t: "g", a: [0, 0, 0, 0], b: press });
-  setTimeout(() => sendInput({ t: "g", a: [0, 0, 0, 0], b: release }), ms);
-}
-
 $("esc").addEventListener("click", () => tapKey("Escape"));
-$("steam").addEventListener("click", () => tapGamepadButton(16));
 
 document.addEventListener("pointerlockchange", () => {
   const locked = inputActive();

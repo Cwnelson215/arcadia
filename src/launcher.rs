@@ -51,11 +51,14 @@ pub struct Game {
     /// Extra gamescope flags, used only when `gamescope = true`.
     #[serde(default)]
     pub gamescope_args: Vec<String>,
-    /// If set, after launch, resize the top-level window whose name matches this
-    /// substring to the capture resolution at +0+0. Fixes apps (e.g. Steam Big
+    /// If set, after launch, resize any window of this **WM_CLASS** that is larger
+    /// than the capture display down to it (at +0+0). Fixes apps (e.g. Steam Big
     /// Picture, which opens a fixed 1280x800 Deck-UI window) that create a window
     /// larger than the capture display — with no window manager on `:99` nothing
-    /// else constrains it, so the overflow falls off the framebuffer.
+    /// else constrains it, so the overflow falls off the framebuffer. Matched by
+    /// class (not name): xdotool can't read the WM_NAME of Steam's CEF window, but
+    /// `--class steam` finds it reliably; the size filter then targets only the
+    /// oversized Big Picture window, not Steam's many small helper windows.
     #[serde(default)]
     pub fit_window: Option<String>,
 }
@@ -280,46 +283,83 @@ fn kill_and_reap(mut running: Running) {
 /// few times in case the app relays out and snaps back. It is best-effort: a
 /// missing window (not booted yet, or already stopped) is a no-op and the loop
 /// retries, then exits on its own — it is not tied to the child's lifetime.
-fn fit_window_async(disp: String, match_name: String) {
+fn fit_window_async(disp: String, match_class: String) {
     std::thread::spawn(move || {
-        // ~30s budget: 40 tries × 750ms. Cheap (one short-lived xdotool per try).
         // (`display` is a reserved tracing field name — hence `disp`.)
-        info!("fit_window: watching for window matching '{match_name}' on {disp}");
+        let cap_w: i32 = CAPTURE_W.parse().unwrap_or(1280);
+        let cap_h: i32 = CAPTURE_H.parse().unwrap_or(720);
+        info!("fit_window: watching for '{match_class}' windows over {cap_w}x{cap_h} on {disp}");
+        // ~30s budget: 40 tries × 750ms. Match by WM_CLASS (xdotool can't read the
+        // WM_NAME of Steam's CEF window) and resize ONLY windows bigger than the
+        // capture — that uniquely targets the oversized Big Picture window, never
+        // Steam's small helper/tray windows.
         for _ in 0..40 {
-            let res = Command::new("xdotool")
-                .args([
-                    "search",
-                    "--name",
-                    &match_name,
-                    "windowsize",
-                    "%@",
-                    CAPTURE_W,
-                    CAPTURE_H,
-                    "windowmove",
-                    "%@",
-                    "0",
-                    "0",
-                ])
+            let out = Command::new("xdotool")
+                .args(["search", "--class", &match_class])
                 .env("DISPLAY", &disp)
                 .stdin(Stdio::null())
-                .stdout(Stdio::null())
                 .stderr(Stdio::null())
-                .status();
-            // A missing `xdotool` makes the resize a silent no-op (the window stays
-            // oversized and clips) — surface it loudly and stop instead of looping.
-            if let Err(e) = &res {
-                if e.kind() == std::io::ErrorKind::NotFound {
+                .output();
+            let out = match out {
+                Ok(o) => o,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                     warn!(
                         "fit_window: `xdotool` not found — install it (`sudo apt install xdotool`); \
-                         '{match_name}' was NOT resized and will be clipped"
+                         '{match_class}' windows will NOT be resized and will clip"
                     );
                     return;
+                }
+                Err(_) => {
+                    std::thread::sleep(std::time::Duration::from_millis(750));
+                    continue;
+                }
+            };
+            for id in String::from_utf8_lossy(&out.stdout).split_whitespace() {
+                if let Some((w, h)) = window_geometry(&disp, id) {
+                    if w > cap_w || h > cap_h {
+                        let _ = run_xdotool(&disp, &["windowsize", id, CAPTURE_W, CAPTURE_H]);
+                        let _ = run_xdotool(&disp, &["windowmove", id, "0", "0"]);
+                        info!("fit_window: resized {id} ({w}x{h} -> {cap_w}x{cap_h})");
+                    }
                 }
             }
             std::thread::sleep(std::time::Duration::from_millis(750));
         }
-        info!("fit_window: done watching for '{match_name}'");
+        info!("fit_window: done watching for '{match_class}'");
     });
+}
+
+/// Read a window's pixel size via `xdotool getwindowgeometry --shell` (emits
+/// `WIDTH=`/`HEIGHT=` lines). `None` if the window vanished or xdotool failed.
+fn window_geometry(disp: &str, id: &str) -> Option<(i32, i32)> {
+    let out = Command::new("xdotool")
+        .args(["getwindowgeometry", "--shell", id])
+        .env("DISPLAY", disp)
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut w = None;
+    let mut h = None;
+    for line in text.lines() {
+        if let Some(v) = line.strip_prefix("WIDTH=") {
+            w = v.trim().parse().ok();
+        } else if let Some(v) = line.strip_prefix("HEIGHT=") {
+            h = v.trim().parse().ok();
+        }
+    }
+    Some((w?, h?))
+}
+
+/// Fire-and-forget `xdotool` with the capture display set and all stdio nulled.
+fn run_xdotool(disp: &str, args: &[&str]) -> std::io::Result<std::process::ExitStatus> {
+    Command::new("xdotool")
+        .args(args)
+        .env("DISPLAY", disp)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
 }
 
 #[cfg(test)]
@@ -348,7 +388,7 @@ mod tests {
             name = "Steam"
             command = "steam"
             gamescope = true
-            fit_window = "Steam Big Picture"
+            fit_window = "steam"
             "#,
         );
         let l = Launcher::load(f.path().to_str().unwrap(), ":99").unwrap();
@@ -364,7 +404,7 @@ mod tests {
         assert_eq!(games[1].id, "steam");
         assert!(games[1].gamescope);
         assert!(games[1].args.is_empty()); // omitted -> default empty
-        assert_eq!(games[1].fit_window.as_deref(), Some("Steam Big Picture"));
+        assert_eq!(games[1].fit_window.as_deref(), Some("steam"));
     }
 
     #[test]

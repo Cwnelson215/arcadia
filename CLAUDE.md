@@ -133,19 +133,26 @@ Steam (Big Picture, logged in) both stream and take keyboard/mouse/gamepad input
     `videoconvert` → GPU `vapostproc` (VAMemory NV12) in `src/pipeline.rs`.
     (uinput needs `/dev/uinput` writable — udev rule + `input` group, already set
     up in Stage 3.)
-  - **Steam Big Picture window overflow (2026-06-11):** Big Picture (`-gamepadui`,
-    the Steam Deck UI) opens a **fixed 1280×800** window — the Deck's native 16:10
-    resolution — regardless of the display mode (`xrandr` shows `:99` still at
-    1280×720; Steam does **not** mode-switch, so restricting the Xorg mode list is a
-    non-fix). With no WM to constrain it, the bottom 80px falls off the 1280×720
-    framebuffer and is never captured (reads as the UI's edges being cut off). Fix:
-    the per-game **`fit_window`** field in `games.toml` (`= "Steam Big Picture"`).
-    The launcher (`src/launcher.rs` `fit_window_async`) polls via **`xdotool`** for
-    ~30s after launch and resizes/moves the matching window to 1280×720+0+0;
-    steamwebhelper (CEF) reflows the Deck UI to fit. Needs `xdotool` on the host
-    (in the Stage-4 apt line). If CEF ever stops reflowing, the fallback is a
-    1280×800 Xorg modeline + client letterbox (`<video>` already `object-fit:
-    contain`).
+  - **Steam Big Picture window overflow + why we DON'T resize it (2026-06-11):**
+    Big Picture (`-gamepadui`, the Steam Deck UI) opens a **fixed 1280×800** window
+    — the Deck's native 16:10 resolution — regardless of the display mode (`xrandr`
+    shows `:99` still at 1280×720; Steam does **not** mode-switch, so restricting the
+    Xorg mode list is a non-fix). With no WM to constrain it, the bottom ~80px falls
+    off the 1280×720 framebuffer and is never captured (reads as the menu's edges
+    cut off; games launch in their own window at full res and are unaffected).
+    **A `fit_window` mechanism exists** (`src/launcher.rs` `fit_window_async`: polls
+    via `xdotool`, by WM_CLASS, and resizes oversized windows to the capture size)
+    and it DID visually fix the clip (CEF reflows on resize — verified via direct
+    `ffmpeg -f x11grab` of `:99`). **But it is deliberately NOT used for Steam:**
+    resizing Steam's Chromium/CEF window from an external client, with no window
+    manager, **desyncs its input handling** — the stream's keyboard/mouse stop
+    reaching it (verified: un-resized BP takes input fine; resized BP goes input-
+    dead). So `games.toml` leaves `fit_window` off for `steam` and we accept the
+    small menu clip to keep input solid. To eliminate the clip instead, make the
+    `:99` display **1280×800** (Xorg modeline/Virtual) so BP fits natively with no
+    resize — at the cost of a 16:10 stream (slight letterbox in a 16:9 browser) for
+    all games. The `fit_window` field/mechanism is retained for any future
+    non-CEF app that oversizes its window.
   - **Reconnect loop = the service lost the `render` group (2026-06-11).** Symptom:
     the browser connects then immediately reconnect-loops; logs show
     `gst::parse::launch failed: link has no sink` and
@@ -187,17 +194,21 @@ Steam (Big Picture, logged in) both stream and take keyboard/mouse/gamepad input
     `sudo tailscale serve --bg 8080`, and load `https://bulbasaur.tail71e22f.ts.net/`.
     `web/index.html` loads `main.js?v=N` — **bump N when changing the client** to
     dodge browser caching (a stale cached client caused an hour of "input dead").
-  - **On-screen Back/Steam buttons (2026-06-11) — the HTTP-friendly substitute.**
-    Because the browser eats physical Esc (above), there was no way to send Back or
-    open the Big Picture menu while playing Steam. Fix that does *not* need HTTPS:
-    toolbar buttons in `web/index.html` (`#esc`, `#steam`) that inject **synthetic**
-    events over the existing input data channel (so the browser never sees them).
-    `web/main.js` `tapKey("Escape")` → `{t:"k"}` → uinput `KEY_ESC` (Big Picture
-    "Back"); `tapGamepadButton(16)` → `{t:"g"}` with W3C button 16 → uinput
-    `BTN_MODE` (Guide → opens the Steam menu; creates the virtual pad lazily, so a
-    phantom controller appears in Steam — harmless). Click them with the mouse free
-    (after Esc has released the capture). This is independent of, and does not
-    replace, the deferred *physical*-Esc passthrough above.
+  - **On-screen "Back (Esc)" button (2026-06-11) — the HTTP-friendly substitute.**
+    Because the browser eats physical Esc (above), there was no way to send Back to
+    the game. Fix that does *not* need HTTPS: a toolbar button in `web/index.html`
+    (`#esc`) → `web/main.js` `tapKey("Escape")` → `{t:"k"}` over the input data
+    channel → uinput `KEY_ESC` (Big Picture "Back"). The browser never sees it.
+    Click it with the mouse free (after Esc has released the capture). Independent of
+    the deferred *physical*-Esc passthrough above.
+  - **DON'T inject the gamepad Guide button from a button (2026-06-11).** A removed
+    "Steam ▾" toolbar button injected W3C gamepad button 16 (`{t:"g"}` → uinput
+    `BTN_MODE`) to open the Big Picture menu. It **flips Steam into controller mode
+    the instant the virtual pad appears** — keyboard/mouse then stop driving the UI
+    and there's no way back without **dropping the controller** (restart arcadia to
+    destroy the uinput pad; Steam reverts to kbd/mouse). It also didn't reliably
+    surface a menu. For BP, navigate by **clicking**; use a **real controller** if
+    you want the Guide/Quick-Access menu (controller mode is then expected).
   - **Browser quirk:** fullscreen targets a wrapper `<div id="stage">`, **not** the
     `<video>`. Fullscreening the `<video>` element makes Chrome overlay native
     media controls (a pause button + running timer in the corner) — which looks
