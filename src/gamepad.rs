@@ -41,12 +41,34 @@ const BTN_MAP: &[(usize, Key)] = &[
     (16, Key::BTN_MODE),   // Guide
 ];
 
+/// A message to the gamepad injector thread.
+pub enum GamepadMsg {
+    /// Replay a full gamepad state snapshot (lazily creates the device).
+    State(GamepadState),
+    /// Destroy the virtual pad. Removing the uinput node looks like a controller
+    /// *disconnect* to the host, so Steam Big Picture drops out of controller
+    /// mode and reverts to keyboard/mouse. Sent by the browser's "Exit controller
+    /// mode" button ({t:"gx"}). The next `State` re-creates it (back into
+    /// controller mode) — so this is a toggle, not a teardown.
+    Release,
+}
+
 /// Blocking injector loop. The uinput device is created lazily on the first
 /// gamepad event, so keyboard/mouse-only (or video-only/mobile) sessions don't
 /// spawn a phantom controller. Returns when the channel closes.
-pub fn run(rx: Receiver<GamepadState>) {
+pub fn run(rx: Receiver<GamepadMsg>) {
     let mut dev: Option<VirtualDevice> = None;
-    while let Ok(state) = rx.recv() {
+    while let Ok(msg) = rx.recv() {
+        let state = match msg {
+            GamepadMsg::State(s) => s,
+            GamepadMsg::Release => {
+                if dev.take().is_some() {
+                    // Drop removes the uinput node -> host sees a disconnect.
+                    info!("virtual gamepad released (exit controller mode)");
+                }
+                continue;
+            }
+        };
         if dev.is_none() {
             match build_device() {
                 Ok(d) => {

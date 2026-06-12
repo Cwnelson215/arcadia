@@ -151,6 +151,7 @@
       <button class="tbtn pill" data-gp="8">Select</button>
       <button class="tbtn pill" data-gp="16">Guide</button>
       <button class="tbtn pill" data-gp="9">Start</button>
+      <button class="tbtn pill" id="dropPadTouch" title="Drop the virtual controller (back to keyboard)">⎋Ctrl</button>
     </div>
   </div>
   <div id="menuBackdrop" class="hidden">
@@ -165,6 +166,7 @@
         <button id="fullscreen">Fullscreen</button>
         <button id="esc" title="Send Esc to the game — Back in Steam Big Picture (the browser eats the real Esc key to release the mouse, so it never reaches the game)">Back (Esc)</button>
         <button id="touchToggle" title="Show/hide the on-screen touch controls (virtual gamepad + keyboard). Auto-on for touch devices.">Touch controls</button>
+        <button id="dropPad" title="Destroy the virtual controller so Steam Big Picture leaves controller mode and the keyboard works again. The touch pad re-creates it on the next press.">Exit controller mode</button>
         <span class="dot" id="state"></span>
         <span id="statetext">idle</span>
       </div>
@@ -172,6 +174,6 @@
       <div id="stats">no stats yet — click Connect</div>
     </div>
   </div>
-  <script src="main.js?v=7"></script>
+  <script src="main.js?v=8"></script>
 </body>
 </html>

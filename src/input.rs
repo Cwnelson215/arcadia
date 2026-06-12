@@ -42,6 +42,10 @@ pub enum InputEvent {
     Wheel { dir: i8 },
     /// Full gamepad state snapshot (routed to the gamepad injector).
     Gamepad(GamepadState),
+    /// Drop the virtual gamepad so the host sees a controller disconnect — the
+    /// way out of Steam Big Picture's controller mode (routed to the gamepad
+    /// injector). The next `Gamepad` event re-creates the pad.
+    GamepadRelease,
     /// Adaptive-bitrate request from the browser (kbps); applied to the encoder.
     Bitrate { kbps: u32 },
     /// Capture state: the browser is (un)pointer-locked. Toggles the captured
@@ -92,6 +96,7 @@ impl InputEvent {
                     .collect();
                 Some(InputEvent::Gamepad(GamepadState { axes, buttons }))
             }
+            "gx" => Some(InputEvent::GamepadRelease),
             "r" => Some(InputEvent::Bitrate {
                 kbps: v.get("kbps")?.as_u64()? as u32,
             }),
@@ -254,7 +259,10 @@ impl Injector {
             }
             // Gamepad/Bitrate/Capture are handled elsewhere (gamepad injector /
             // encoder / capture element), never on the keyboard/mouse path.
-            InputEvent::Gamepad(_) | InputEvent::Bitrate { .. } | InputEvent::Capture { .. } => {}
+            InputEvent::Gamepad(_)
+            | InputEvent::GamepadRelease
+            | InputEvent::Bitrate { .. }
+            | InputEvent::Capture { .. } => {}
         }
         Ok(())
     }

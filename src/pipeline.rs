@@ -51,7 +51,7 @@ pub async fn run_session(socket: WebSocket, args: Arc<Args>) -> Result<()> {
     let (input_tx, input_rx) = std_mpsc::channel::<input::InputEvent>();
     std::thread::spawn(move || input::run(input_rx));
 
-    let (gamepad_tx, gamepad_rx) = std_mpsc::channel::<input::GamepadState>();
+    let (gamepad_tx, gamepad_rx) = std_mpsc::channel::<gamepad::GamepadMsg>();
     std::thread::spawn(move || gamepad::run(gamepad_rx));
 
     // The H.264 encoder, for adaptive-bitrate requests (changeable while PLAYING).
@@ -83,7 +83,10 @@ pub async fn run_session(socket: WebSocket, args: Arc<Args>) -> Result<()> {
             if let Some(ev) = input::InputEvent::from_json(&msg) {
                 match ev {
                     input::InputEvent::Gamepad(state) => {
-                        let _ = gamepad_tx.send(state);
+                        let _ = gamepad_tx.send(gamepad::GamepadMsg::State(state));
+                    }
+                    input::InputEvent::GamepadRelease => {
+                        let _ = gamepad_tx.send(gamepad::GamepadMsg::Release);
                     }
                     input::InputEvent::Bitrate { kbps } => {
                         let clamped = kbps.clamp(1000, 20000);

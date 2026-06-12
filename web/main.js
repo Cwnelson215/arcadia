@@ -639,3 +639,27 @@ function applyTouchpad(on) {
 $("touchToggle").addEventListener("click", () => {
   applyTouchpad($("touchpad").classList.contains("hidden"));
 });
+
+// Exit controller mode: tell the server to destroy the virtual gamepad so the
+// host sees a controller disconnect and Steam Big Picture reverts to keyboard/
+// mouse (a virtual pad otherwise locks BP into controller mode — and the touch
+// pad creates one the instant you press it). Reset our client-side pad state so
+// nothing re-asserts a held button. The pad is re-created on the next press.
+function dropController() {
+  tpad.a = [0, 0, 0, 0];
+  tpad.b = new Array(17).fill(0);
+  sendInput({ t: "gx" });
+}
+$("dropPad").addEventListener("click", dropController);
+// Same action from the touch pad itself (not a gamepad button — handled here so
+// the data-gp button loop above doesn't treat it as one).
+$("dropPadTouch").addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  e.currentTarget.classList.add("pressed");
+  dropController();
+});
+$("dropPadTouch").addEventListener("pointerup", (e) => {
+  e.stopPropagation();
+  e.currentTarget.classList.remove("pressed");
+});
