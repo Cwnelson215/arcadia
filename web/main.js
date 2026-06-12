@@ -274,6 +274,12 @@ loadGames();
 let inputCh = null;
 const videoEl = $("video");
 
+// Touch device? Drives the mobile layout, the touch controls, and — critically —
+// whether we use Pointer Lock. On a phone there's no cursor to lock and tapping
+// bare video would only steal events from the on-screen overlay buttons.
+const isTouch =
+  matchMedia("(hover: none) and (pointer: coarse)").matches || "ontouchstart" in window;
+
 function inputActive() {
   return document.pointerLockElement === videoEl;
 }
@@ -297,8 +303,12 @@ function updateHint() {
     : "click the video to capture mouse + keyboard";
 }
 
+// Desktop only: clicking the video captures the mouse via Pointer Lock. On touch
+// this is skipped — there's no mouse-look, and locking would starve the on-screen
+// overlay buttons of their taps (a tap landing on bare video would capture the
+// page). Mobile input is the virtual/real gamepad, so a bare-video tap is a no-op.
 videoEl.addEventListener("click", () => {
-  if (pc && !inputActive()) videoEl.requestPointerLock();
+  if (!isTouch && pc && !inputActive()) videoEl.requestPointerLock();
 });
 
 // Manual fullscreen toggle — fullscreens the wrapper (#stage), NOT the <video>
@@ -515,16 +525,16 @@ function pollGamepad() {
 requestAnimationFrame(pollGamepad);
 
 // ---- on-screen touch controls (Stage 4b) -------------------------------------
-// A translucent virtual gamepad + keyboard strip for mobile, so a phone alone can
-// navigate Steam Big Picture / RetroArch (no physical controller needed). Buttons
-// reuse the SAME data-channel messages as a real gamepad / keyboard:
+// A translucent virtual gamepad for mobile, so a phone alone can navigate Steam
+// Big Picture / RetroArch (no physical controller needed). Buttons reuse the SAME
+// data-channel message as a real gamepad:
 //   data-gp="<idx>"  -> {t:"g",a,b} full-state snapshot (server: uinput X-Box pad)
-//   data-key="<code>"-> {t:"k"}     via tapKey (server: uinput keyboard)
+// Gamepad-only: Esc and "Exit controller mode" live in the overlay menu, not on
+// the pad (keeps the on-screen layout uncluttered).
 // NB: a full virtual pad flips Steam Big Picture into controller mode — that's the
-// intended way to drive BP with a controller. The keyboard strip stays for
-// RetroArch / dialogs that want keys. Touch + a *physical* gamepad simultaneously
-// isn't supported (pollGamepad above would race these snapshots); a phone has no
-// physical pad, so this doesn't arise in practice.
+// intended way to drive BP with a controller. Touch + a *physical* gamepad
+// simultaneously isn't supported (pollGamepad above would race these snapshots);
+// a phone has no physical pad, so this doesn't arise in practice.
 
 // Client-side virtual-pad state — {t:"g"} is a full snapshot, so we hold the whole
 // state and resend it on every change. b[] indexes are the W3C standard mapping.
@@ -561,31 +571,22 @@ for (const el of document.querySelectorAll("#touchpad .tbtn[data-gp]")) {
   el.addEventListener("lostpointercapture", release);
 }
 
-// Keyboard-strip buttons (Esc / Enter / Backspace) — tap = down then up.
-for (const el of document.querySelectorAll("#touchpad .tbtn[data-key]")) {
-  const code = el.dataset.key;
-  el.addEventListener("pointerdown", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    el.classList.add("pressed");
-    tapKey(code);
-  });
-  const clear = (e) => {
-    if (e) e.stopPropagation();
-    el.classList.remove("pressed");
-  };
-  el.addEventListener("pointerup", clear);
-  el.addEventListener("pointercancel", clear);
-  el.addEventListener("lostpointercapture", clear);
-}
-
 // Visibility: auto-on for touch devices, with a manual toggle persisted to
 // localStorage. Desktop defaults off. On touch, the body.mobile class makes the
 // stream fill the viewport (and grow when the phone rotates to landscape).
 const TOUCHPAD_KEY = "arcadia.touchpad";
-const isTouch =
-  matchMedia("(hover: none) and (pointer: coarse)").matches || "ontouchstart" in window;
 if (isTouch) document.body.classList.add("mobile");
+
+// Nudge the page down a pixel on load / rotation so Chrome retracts its URL bar
+// (the CSS leaves a sliver of scroll overflow for exactly this). Best-effort:
+// modern Chrome often only hides the bar on a real user swipe, but the page is
+// now scrollable so that swipe works — which it couldn't before. No fullscreen,
+// no mode switch.
+if (isTouch) {
+  const hideBar = () => setTimeout(() => window.scrollTo(0, 1), 150);
+  window.addEventListener("load", hideBar);
+  window.addEventListener("orientationchange", hideBar);
+}
 function applyTouchpad(on) {
   $("touchpad").classList.toggle("hidden", !on);
   $("touchToggle").classList.toggle("on", on);
@@ -600,26 +601,15 @@ $("touchToggle").addEventListener("click", () => {
   applyTouchpad($("touchpad").classList.contains("hidden"));
 });
 
-// Exit controller mode: tell the server to destroy the virtual gamepad so the
-// host sees a controller disconnect and Steam Big Picture reverts to keyboard/
-// mouse (a virtual pad otherwise locks BP into controller mode — and the touch
-// pad creates one the instant you press it). Reset our client-side pad state so
-// nothing re-asserts a held button. The pad is re-created on the next press.
+// Exit controller mode (overlay menu button): tell the server to destroy the
+// virtual gamepad so the host sees a controller disconnect and Steam Big Picture
+// reverts to keyboard/mouse (a virtual pad otherwise locks BP into controller
+// mode — and the touch pad creates one the instant you press it). Reset our
+// client-side pad state so nothing re-asserts a held button. The pad is
+// re-created on the next press.
 function dropController() {
   tpad.a = [0, 0, 0, 0];
   tpad.b = new Array(17).fill(0);
   sendInput({ t: "gx" });
 }
 $("dropPad").addEventListener("click", dropController);
-// Same action from the touch pad itself (not a gamepad button — handled here so
-// the data-gp button loop above doesn't treat it as one).
-$("dropPadTouch").addEventListener("pointerdown", (e) => {
-  e.preventDefault();
-  e.stopPropagation();
-  e.currentTarget.classList.add("pressed");
-  dropController();
-});
-$("dropPadTouch").addEventListener("pointerup", (e) => {
-  e.stopPropagation();
-  e.currentTarget.classList.remove("pressed");
-});

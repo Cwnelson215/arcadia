@@ -55,7 +55,11 @@ pub enum GamepadMsg {
 
 /// Blocking injector loop. The uinput device is created lazily on the first
 /// gamepad event, so keyboard/mouse-only (or video-only/mobile) sessions don't
-/// spawn a phantom controller. Returns when the channel closes.
+/// spawn a phantom controller. This thread is now PERSISTENT (spawned once in
+/// `serve`), so the channel only closes at process shutdown — the device
+/// survives reconnects and is destroyed only by an explicit `Release` ({t:"gx"}).
+/// That's what keeps Steam Big Picture from flipping controller mode on every
+/// jittery-mobile reconnect.
 pub fn run(rx: Receiver<GamepadMsg>) {
     let mut dev: Option<VirtualDevice> = None;
     while let Ok(msg) = rx.recv() {

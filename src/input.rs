@@ -52,6 +52,11 @@ pub enum InputEvent {
     /// cursor's visibility server-side, so it shows only while the user is
     /// actively controlling the display.
     Capture { on: bool },
+    /// Release every still-held key/button WITHOUT destroying the devices.
+    /// Sent server-side at session end (the injector is now persistent, so the
+    /// old "release on channel close" no longer fires per session). Not parsed
+    /// from any browser message.
+    ReleaseAll,
 }
 
 /// A snapshot of a browser Gamepad (W3C "standard" mapping). `axes` is
@@ -134,8 +139,10 @@ fn x_button_to_btn(button: u8) -> Option<Key> {
 }
 
 /// Blocking injector loop. Owns the uinput devices, so it runs on its own
-/// thread. Returns when the channel closes (session ended), after releasing any
-/// still-held keys/buttons so nothing stays latched for the next session.
+/// thread. The injector is now PERSISTENT (spawned once in `serve`), so the
+/// channel only closes at process shutdown; per-session held-key cleanup arrives
+/// as an explicit `ReleaseAll` event at each session end. The `release_all` on
+/// channel close below is just a shutdown safety net.
 pub fn run(rx: Receiver<InputEvent>) {
     let mut inj = match Injector::new() {
         Ok(i) => i,
@@ -257,6 +264,8 @@ impl Injector {
                     val,
                 )])?;
             }
+            // Flush held keys/buttons at session end; keeps the devices alive.
+            InputEvent::ReleaseAll => self.release_all(),
             // Gamepad/Bitrate/Capture are handled elsewhere (gamepad injector /
             // encoder / capture element), never on the keyboard/mouse path.
             InputEvent::Gamepad(_)

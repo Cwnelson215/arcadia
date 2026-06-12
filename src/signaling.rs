@@ -6,7 +6,7 @@
 //! webrtcbin. Stage 1 assumes a single viewer at a time.
 
 use crate::launcher::Launcher;
-use crate::{pipeline, Args};
+use crate::{gamepad, input, pipeline, Args};
 use anyhow::Result;
 use axum::{
     extract::ws::{WebSocket, WebSocketUpgrade},
@@ -34,16 +34,35 @@ struct AppState {
     /// Bumped on every connect; lets a reconnect cancel a pending spin-down
     /// timer armed by the previous disconnect.
     idle_gen: Arc<AtomicU64>,
+    /// Senders into the *persistent* uinput injector threads (keyboard/mouse and
+    /// gamepad), created once at startup and shared across every session. Cloned
+    /// per session so a reconnect never tears down the virtual devices — in
+    /// particular the gamepad survives reconnects (it would otherwise be
+    /// destroyed on each session end, making Steam Big Picture flip controller
+    /// mode). `std::sync::mpsc::Sender` is `Clone + Send`.
+    input_tx: std::sync::mpsc::Sender<input::InputEvent>,
+    gamepad_tx: std::sync::mpsc::Sender<gamepad::GamepadMsg>,
 }
 
 pub async fn serve(addr: SocketAddr, args: Args) -> Result<()> {
     let web_dir = args.web_dir.clone();
     let launcher = Arc::new(Launcher::load(&args.games_config, &args.display)?);
+
+    // Persistent uinput injectors: spawned once, not per session. Each owns its
+    // virtual devices and lives for the whole process, so reconnects don't
+    // recreate them (the gamepad in particular must persist — see AppState).
+    let (input_tx, input_rx) = std::sync::mpsc::channel::<input::InputEvent>();
+    std::thread::spawn(move || input::run(input_rx));
+    let (gamepad_tx, gamepad_rx) = std::sync::mpsc::channel::<gamepad::GamepadMsg>();
+    std::thread::spawn(move || gamepad::run(gamepad_rx));
+
     let state = AppState {
         args: Arc::new(args),
         launcher,
         viewers: Arc::new(AtomicUsize::new(0)),
         idle_gen: Arc::new(AtomicU64::new(0)),
+        input_tx,
+        gamepad_tx,
     };
 
     let app = build_router(state, &web_dir);
@@ -82,7 +101,14 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     }
     state.idle_gen.fetch_add(1, SeqCst);
 
-    if let Err(e) = pipeline::run_session(socket, state.args.clone()).await {
+    if let Err(e) = pipeline::run_session(
+        socket,
+        state.args.clone(),
+        state.input_tx.clone(),
+        state.gamepad_tx.clone(),
+    )
+    .await
+    {
         error!("session ended with error: {e:#}");
     }
     info!("streaming session closed");
@@ -175,11 +201,17 @@ mod tests {
         )
         .unwrap();
         let launcher = Arc::new(Launcher::load(f.path().to_str().unwrap(), &args.display).unwrap());
+        // Throwaway injector channels — the API tests never send input events, so
+        // the receivers are dropped and no real uinput devices are created.
+        let (input_tx, _input_rx) = std::sync::mpsc::channel();
+        let (gamepad_tx, _gamepad_rx) = std::sync::mpsc::channel();
         AppState {
             args: Arc::new(args),
             launcher,
             viewers: Arc::new(AtomicUsize::new(0)),
             idle_gen: Arc::new(AtomicU64::new(0)),
+            input_tx,
+            gamepad_tx,
         }
     }
 

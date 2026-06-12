@@ -27,7 +27,12 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
-pub async fn run_session(socket: WebSocket, args: Arc<Args>) -> Result<()> {
+pub async fn run_session(
+    socket: WebSocket,
+    args: Arc<Args>,
+    input_tx: std_mpsc::Sender<input::InputEvent>,
+    gamepad_tx: std_mpsc::Sender<gamepad::GamepadMsg>,
+) -> Result<()> {
     let (mut ws_tx, mut ws_rx) = socket.split();
 
     // gst callback threads -> this task -> browser
@@ -46,13 +51,10 @@ pub async fn run_session(socket: WebSocket, args: Arc<Args>) -> Result<()> {
 
     // Input round-trip: a data channel the browser sends key/mouse/gamepad
     // events on. Created *before* PLAYING so it appears in the SDP offer and
-    // negotiates alongside the video. Keyboard/mouse and gamepad both inject via
-    // uinput, on separate threads (each owns its own virtual devices).
-    let (input_tx, input_rx) = std_mpsc::channel::<input::InputEvent>();
-    std::thread::spawn(move || input::run(input_rx));
-
-    let (gamepad_tx, gamepad_rx) = std_mpsc::channel::<gamepad::GamepadMsg>();
-    std::thread::spawn(move || gamepad::run(gamepad_rx));
+    // negotiates alongside the video. The keyboard/mouse and gamepad uinput
+    // injectors are PERSISTENT (spawned once in `serve`, see signaling.rs); we
+    // only hold cloned `Sender`s here, so a reconnect doesn't destroy/recreate
+    // the virtual devices (which would flip Steam Big Picture's controller mode).
 
     // The H.264 encoder, for adaptive-bitrate requests (changeable while PLAYING).
     let enc = pipeline.by_name("enc").context("encoder 'enc' not found")?;
@@ -76,6 +78,9 @@ pub async fn run_session(socket: WebSocket, args: Arc<Args>) -> Result<()> {
             info!("input data channel open");
         }),
     );
+    // Cloned so we can flush held keys/buttons on session end (below) after the
+    // on-message closure moves `input_tx` into itself.
+    let release_tx = input_tx.clone();
     data_channel.connect_closure(
         "on-message-string",
         false,
@@ -161,6 +166,14 @@ pub async fn run_session(socket: WebSocket, args: Arc<Args>) -> Result<()> {
     if let Err(e) = pipeline.set_state(gst::State::Null) {
         error!("failed to NULL the pipeline: {e}");
     }
+
+    // Release any keys/mouse buttons still held when the session ended, so an
+    // abrupt disconnect (common on mobile) doesn't leave one latched for the next
+    // session. The persistent injector keeps its devices; this only zeroes state.
+    // The gamepad deliberately is NOT released here — it persists across
+    // reconnects and is dropped only by an explicit {t:"gx"}.
+    let _ = release_tx.send(input::InputEvent::ReleaseAll);
+
     result
 }
 

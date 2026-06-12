@@ -62,6 +62,12 @@
        to landscape. The video is centered + letterboxed; controls overlay it. */
     body.mobile #wrap { padding: 0; gap: 0; }
     body.mobile #hint { display: none; }
+    /* Make the page a hair taller than the small (URL-bar-visible) viewport so
+       it's scrollable. A page that's exactly the viewport height can never let
+       Chrome retract its URL bar; with this sliver of overflow a landscape swipe
+       collapses the bar like any normal page. We do NOT force fullscreen.
+       100lvh = the large (bar-hidden) viewport height. */
+    body.mobile { min-height: calc(100lvh + 1px); }
     body.mobile #stage { position: fixed; inset: 0; z-index: 1; background: #000;
                          display: flex; align-items: center; justify-content: center; }
     body.mobile #stage video { width: 100vw; width: 100dvw; height: 100vh;
@@ -87,7 +93,7 @@
     .tbtn.pill { border-radius: 999px; padding: 8px 12px;
                  font-size: clamp(11px, 3.2vmin, 15px); }
     /* Edge-anchored clusters. Top row: shoulders (corners) + sys (center).
-       Bottom row: D-pad (left) + keys (center) + face (right). env(safe-area-*)
+       Bottom row: D-pad (left) + face (right). env(safe-area-*)
        keeps them clear of notches/rounded corners. */
     .tp-cluster { position: fixed; pointer-events: none; display: flex; gap: 6px; }
     .tp-shoulders-l { top: calc(8px + env(safe-area-inset-top));
@@ -108,9 +114,6 @@
                grid-template-rows: repeat(3, var(--sz)); gap: 2px; }
     .tp-face .y { grid-area: 1 / 2; } .tp-face .x { grid-area: 2 / 1; }
     .tp-face .b { grid-area: 2 / 3; } .tp-face .a { grid-area: 3 / 2; }
-    .tp-keys { bottom: calc(8px + env(safe-area-inset-bottom)); left: 50%;
-               transform: translateX(-50%); flex-wrap: wrap;
-               justify-content: center; max-width: 56vw; }
   </style>
 </head>
 <body>
@@ -120,9 +123,9 @@
       <video id="video" autoplay playsinline muted disablepictureinpicture></video>
       <!-- On-screen touch controls (mobile). A translucent virtual gamepad laid
            out for landscape: shoulders top-corners, Select/Guide/Start top-center,
-           D-pad bottom-left, A/B/X/Y bottom-right, keyboard strip bottom-center.
-           data-gp = W3C gamepad button index ({t:"g"}); data-key =
-           KeyboardEvent.code ({t:"k"}). Lives inside #stage so it overlays the
+           D-pad bottom-left, A/B/X/Y bottom-right. data-gp = W3C gamepad button
+           index ({t:"g"}). Gamepad-only: Esc / Exit-controller-mode live in the
+           overlay menu, not on the pad. Lives inside #stage so it overlays the
            video in normal and fullscreen. Wired in main.js. -->
       <div id="touchpad" class="hidden">
         <div class="tp-cluster tp-shoulders-l">
@@ -150,12 +153,6 @@
           <button class="tbtn round b" data-gp="1">B</button>
           <button class="tbtn round a" data-gp="0">A</button>
         </div>
-        <div class="tp-cluster tp-keys">
-          <button class="tbtn pill" data-key="Escape">Esc</button>
-          <button class="tbtn pill" data-key="Enter">Enter</button>
-          <button class="tbtn pill" data-key="Backspace">Bksp</button>
-          <button class="tbtn pill" id="dropPadTouch" title="Drop the virtual controller (back to keyboard)">⎋Ctrl</button>
-        </div>
       </div>
     </div>
     <div id="hint">click the video to capture · double-tap Esc or long-press for the menu</div>
@@ -180,6 +177,6 @@
       <div id="stats">no stats yet — click Connect</div>
     </div>
   </div>
-  <script src="main.js?v=9"></script>
+  <script src="main.js?v=10"></script>
 </body>
 </html>
