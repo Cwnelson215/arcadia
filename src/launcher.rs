@@ -286,7 +286,7 @@ fn fit_window_async(disp: String, match_name: String) {
         // (`display` is a reserved tracing field name — hence `disp`.)
         info!("fit_window: watching for window matching '{match_name}' on {disp}");
         for _ in 0..40 {
-            let _ = Command::new("xdotool")
+            let res = Command::new("xdotool")
                 .args([
                     "search",
                     "--name",
@@ -305,6 +305,17 @@ fn fit_window_async(disp: String, match_name: String) {
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .status();
+            // A missing `xdotool` makes the resize a silent no-op (the window stays
+            // oversized and clips) — surface it loudly and stop instead of looping.
+            if let Err(e) = &res {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    warn!(
+                        "fit_window: `xdotool` not found — install it (`sudo apt install xdotool`); \
+                         '{match_name}' was NOT resized and will be clipped"
+                    );
+                    return;
+                }
+            }
             std::thread::sleep(std::time::Duration::from_millis(750));
         }
         info!("fit_window: done watching for '{match_name}'");
