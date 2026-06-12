@@ -513,3 +513,129 @@ function pollGamepad() {
   requestAnimationFrame(pollGamepad);
 }
 requestAnimationFrame(pollGamepad);
+
+// ---- on-screen touch controls (Stage 4b) -------------------------------------
+// A translucent virtual gamepad + keyboard strip for mobile, so a phone alone can
+// navigate Steam Big Picture / RetroArch (no physical controller needed). Buttons
+// reuse the SAME data-channel messages as a real gamepad / keyboard:
+//   data-gp="<idx>"  -> {t:"g",a,b} full-state snapshot (server: uinput X-Box pad)
+//   data-key="<code>"-> {t:"k"}     via tapKey (server: uinput keyboard)
+// NB: a full virtual pad flips Steam Big Picture into controller mode — that's the
+// intended way to drive BP with a controller. The keyboard strip stays for
+// RetroArch / dialogs that want keys. Touch + a *physical* gamepad simultaneously
+// isn't supported (pollGamepad above would race these snapshots); a phone has no
+// physical pad, so this doesn't arise in practice.
+
+// Client-side virtual-pad state — {t:"g"} is a full snapshot, so we hold the whole
+// state and resend it on every change. b[] indexes are the W3C standard mapping.
+const tpad = { a: [0, 0, 0, 0], b: new Array(17).fill(0) };
+function sendTpad() {
+  sendInput({ t: "g", a: tpad.a.map((v) => +v.toFixed(3)), b: tpad.b.slice() });
+}
+
+// Digital gamepad buttons (D-pad, face, shoulders, Start/Select/Guide).
+for (const el of document.querySelectorAll("#touchpad .tbtn[data-gp]")) {
+  const idx = +el.dataset.gp;
+  const press = (e) => {
+    e.preventDefault();
+    e.stopPropagation(); // don't trip the document long-press→menu or video lock
+    el.setPointerCapture?.(e.pointerId);
+    tpad.b[idx] = 1;
+    el.classList.add("pressed");
+    sendTpad();
+  };
+  const release = (e) => {
+    if (e) e.stopPropagation();
+    if (tpad.b[idx] === 0) return;
+    tpad.b[idx] = 0;
+    el.classList.remove("pressed");
+    sendTpad();
+  };
+  el.addEventListener("pointerdown", press);
+  el.addEventListener("pointerup", release);
+  el.addEventListener("pointercancel", release);
+  el.addEventListener("pointerleave", release);
+}
+
+// Keyboard-strip buttons (Esc / Enter / Backspace) — tap = down then up.
+for (const el of document.querySelectorAll("#touchpad .tbtn[data-key]")) {
+  const code = el.dataset.key;
+  el.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    el.classList.add("pressed");
+    tapKey(code);
+  });
+  const clear = (e) => {
+    if (e) e.stopPropagation();
+    el.classList.remove("pressed");
+  };
+  el.addEventListener("pointerup", clear);
+  el.addEventListener("pointercancel", clear);
+  el.addEventListener("pointerleave", clear);
+}
+
+// Left analog stick — drag the knob; normalize displacement to axes 0/1 (-1..1).
+(() => {
+  const base = $("lstickBase");
+  const knob = $("lstick");
+  if (!base || !knob) return;
+  let active = false;
+  let cx = 0, cy = 0, radius = 1;
+  const reset = (e) => {
+    if (!active) return;
+    if (e) e.stopPropagation();
+    active = false;
+    knob.style.transform = "translate(0px, 0px)";
+    tpad.a[0] = 0;
+    tpad.a[1] = 0;
+    sendTpad();
+  };
+  base.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const r = base.getBoundingClientRect();
+    cx = r.left + r.width / 2;
+    cy = r.top + r.height / 2;
+    radius = r.width / 2;
+    active = true;
+    base.setPointerCapture?.(e.pointerId);
+  });
+  base.addEventListener("pointermove", (e) => {
+    if (!active) return;
+    e.preventDefault();
+    e.stopPropagation();
+    let dx = e.clientX - cx;
+    let dy = e.clientY - cy;
+    const dist = Math.hypot(dx, dy);
+    if (dist > radius) {
+      dx = (dx / dist) * radius;
+      dy = (dy / dist) * radius;
+    }
+    knob.style.transform = `translate(${dx}px, ${dy}px)`;
+    tpad.a[0] = +(dx / radius).toFixed(3);
+    tpad.a[1] = +(dy / radius).toFixed(3); // down = +1 (matches gamepad Y axis)
+    sendTpad();
+  });
+  base.addEventListener("pointerup", reset);
+  base.addEventListener("pointercancel", reset);
+})();
+
+// Visibility: auto-on for touch devices, with a manual toggle persisted to
+// localStorage. Desktop defaults off.
+const TOUCHPAD_KEY = "arcadia.touchpad";
+const isTouch =
+  matchMedia("(hover: none) and (pointer: coarse)").matches || "ontouchstart" in window;
+function applyTouchpad(on) {
+  $("touchpad").classList.toggle("hidden", !on);
+  $("touchToggle").classList.toggle("on", on);
+  try { localStorage.setItem(TOUCHPAD_KEY, on ? "on" : "off"); } catch (e) {}
+}
+{
+  let saved = null;
+  try { saved = localStorage.getItem(TOUCHPAD_KEY); } catch (e) {}
+  applyTouchpad(saved ? saved === "on" : isTouch);
+}
+$("touchToggle").addEventListener("click", () => {
+  applyTouchpad($("touchpad").classList.contains("hidden"));
+});

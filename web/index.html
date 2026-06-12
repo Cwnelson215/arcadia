@@ -57,6 +57,55 @@
            border-radius: 50%; background: #888; }
     .dot.on { background: #3c3; }
     .dot.err { background: #c33; }
+    #touchToggle.on { outline: 2px solid #3c3; }
+    /* On-screen touch controls — a translucent virtual gamepad + keyboard strip
+       for mobile (no physical controller needed). The container is pointer-
+       events:none so taps on the bare video still pass through; only .tbtn
+       controls are interactive. Sits below #menuToggle (z40) and the menu (z50). */
+    #touchpad { position: fixed; inset: 0; z-index: 30; pointer-events: none;
+                touch-action: none; }
+    #touchpad.hidden { display: none; }
+    .tbtn { pointer-events: auto; touch-action: none; user-select: none;
+            -webkit-user-select: none; -webkit-tap-highlight-color: transparent;
+            display: flex; align-items: center; justify-content: center;
+            background: rgba(20, 20, 20, 0.6); color: #eee; border: 1px solid #555;
+            opacity: 0.4; font-size: min(4.2vmin, 22px); font-weight: 600;
+            transition: opacity 0.1s, background 0.1s; }
+    .tbtn.pressed, .tbtn:active { opacity: 0.9; background: rgba(60, 120, 60, 0.7); }
+    .tbtn.round { width: min(13vmin, 64px); height: min(13vmin, 64px);
+                  border-radius: 50%; }
+    .tbtn.pill { border-radius: 999px; padding: min(1.6vmin, 9px) min(3vmin, 16px);
+                 font-size: min(3.4vmin, 16px); }
+    /* Cluster anchors (landscape gaming orientation). */
+    .tp-cluster { position: fixed; pointer-events: none; }
+    .tp-dpad { left: max(3vmin, 14px); bottom: max(3vmin, 14px);
+               display: grid; grid-template-columns: repeat(3, min(13vmin, 64px));
+               grid-template-rows: repeat(3, min(13vmin, 64px)); gap: 2px; }
+    .tp-dpad .up    { grid-area: 1 / 2; } .tp-dpad .left  { grid-area: 2 / 1; }
+    .tp-dpad .right { grid-area: 2 / 3; } .tp-dpad .down  { grid-area: 3 / 2; }
+    .tp-face { right: max(3vmin, 14px); bottom: max(3vmin, 14px);
+               display: grid; grid-template-columns: repeat(3, min(13vmin, 64px));
+               grid-template-rows: repeat(3, min(13vmin, 64px)); gap: 2px; }
+    .tp-face .y { grid-area: 1 / 2; } .tp-face .x { grid-area: 2 / 1; }
+    .tp-face .b { grid-area: 2 / 3; } .tp-face .a { grid-area: 3 / 2; }
+    .tp-stick { left: max(3vmin, 14px); top: 50%; transform: translateY(-50%); }
+    #lstickBase { pointer-events: auto; touch-action: none;
+                  width: min(26vmin, 130px); height: min(26vmin, 130px);
+                  border-radius: 50%; background: rgba(20, 20, 20, 0.45);
+                  border: 1px solid #555; opacity: 0.55; position: relative; }
+    #lstick { position: absolute; left: 50%; top: 50%;
+              width: min(11vmin, 56px); height: min(11vmin, 56px);
+              margin: calc(min(11vmin, 56px) / -2) 0 0 calc(min(11vmin, 56px) / -2);
+              border-radius: 50%; background: rgba(20, 20, 20, 0.7);
+              border: 1px solid #777; }
+    .tp-shoulders-l { left: max(3vmin, 14px); top: max(3vmin, 14px);
+                      display: flex; gap: 8px; }
+    .tp-shoulders-r { right: max(3vmin, 14px); top: max(3vmin, 14px);
+                      display: flex; gap: 8px; }
+    .tp-center { left: 50%; bottom: max(3vmin, 14px); transform: translateX(-50%);
+                 display: flex; gap: 8px; }
+    .tp-keys { left: 50%; top: max(3vmin, 14px); transform: translateX(-50%);
+               display: flex; gap: 8px; }
   </style>
 </head>
 <body>
@@ -64,6 +113,45 @@
   <div id="wrap">
     <div id="stage"><video id="video" autoplay playsinline muted disablepictureinpicture></video></div>
     <div id="hint">click the video to capture · double-tap Esc or long-press for the menu</div>
+  </div>
+  <!-- On-screen touch controls (mobile). A translucent virtual gamepad — D-pad,
+       face buttons, shoulders, Start/Select/Guide, left analog stick — plus a
+       keyboard strip. data-gp = W3C gamepad button index ({t:"g"}); data-key =
+       KeyboardEvent.code ({t:"k"}). Wired in main.js. -->
+  <div id="touchpad" class="hidden">
+    <div class="tp-cluster tp-shoulders-l">
+      <button class="tbtn pill" data-gp="6">L2</button>
+      <button class="tbtn pill" data-gp="4">L1</button>
+    </div>
+    <div class="tp-cluster tp-shoulders-r">
+      <button class="tbtn pill" data-gp="5">R1</button>
+      <button class="tbtn pill" data-gp="7">R2</button>
+    </div>
+    <div class="tp-cluster tp-keys">
+      <button class="tbtn pill" data-key="Escape">Esc</button>
+      <button class="tbtn pill" data-key="Enter">Enter</button>
+      <button class="tbtn pill" data-key="Backspace">Bksp</button>
+    </div>
+    <div class="tp-cluster tp-stick">
+      <div id="lstickBase"><div id="lstick"></div></div>
+    </div>
+    <div class="tp-cluster tp-dpad">
+      <button class="tbtn round up"    data-gp="12">▲</button>
+      <button class="tbtn round left"  data-gp="14">◀</button>
+      <button class="tbtn round right" data-gp="15">▶</button>
+      <button class="tbtn round down"  data-gp="13">▼</button>
+    </div>
+    <div class="tp-cluster tp-face">
+      <button class="tbtn round y" data-gp="3">Y</button>
+      <button class="tbtn round x" data-gp="2">X</button>
+      <button class="tbtn round b" data-gp="1">B</button>
+      <button class="tbtn round a" data-gp="0">A</button>
+    </div>
+    <div class="tp-cluster tp-center">
+      <button class="tbtn pill" data-gp="8">Select</button>
+      <button class="tbtn pill" data-gp="16">Guide</button>
+      <button class="tbtn pill" data-gp="9">Start</button>
+    </div>
   </div>
   <div id="menuBackdrop" class="hidden">
     <div id="menu">
@@ -76,6 +164,7 @@
         <button id="stop">Stop game</button>
         <button id="fullscreen">Fullscreen</button>
         <button id="esc" title="Send Esc to the game — Back in Steam Big Picture (the browser eats the real Esc key to release the mouse, so it never reaches the game)">Back (Esc)</button>
+        <button id="touchToggle" title="Show/hide the on-screen touch controls (virtual gamepad + keyboard). Auto-on for touch devices.">Touch controls</button>
         <span class="dot" id="state"></span>
         <span id="statetext">idle</span>
       </div>
@@ -83,6 +172,6 @@
       <div id="stats">no stats yet — click Connect</div>
     </div>
   </div>
-  <script src="main.js?v=6"></script>
+  <script src="main.js?v=7"></script>
 </body>
 </html>
