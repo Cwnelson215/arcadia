@@ -234,6 +234,13 @@ impl Launcher {
         // Capture display + audio sink for the child and anything it spawns.
         cmd.env("DISPLAY", &self.display);
         cmd.env("PULSE_SERVER", "127.0.0.1");
+        // Debian installs game binaries (steam → /usr/games/steam, retroarch) under
+        // /usr/games and /usr/local/games, which are conventionally absent from a
+        // systemd/daemon PATH — and arcadia runs as a `systemd --user` service. Add
+        // them so games resolve regardless of how arcadia itself was started.
+        // (`Command` resolves a bare program name against this child PATH.)
+        let path = std::env::var("PATH").unwrap_or_default();
+        cmd.env("PATH", format!("{path}:/usr/local/games:/usr/games"));
         for (k, v) in &game.env {
             cmd.env(k, v);
         }

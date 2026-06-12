@@ -146,6 +146,28 @@ Steam (Big Picture, logged in) both stream and take keyboard/mouse/gamepad input
     (in the Stage-4 apt line). If CEF ever stops reflowing, the fallback is a
     1280×800 Xorg modeline + client letterbox (`<video>` already `object-fit:
     contain`).
+  - **Reconnect loop = the service lost the `render` group (2026-06-11).** Symptom:
+    the browser connects then immediately reconnect-loops; logs show
+    `gst::parse::launch failed: link has no sink` and
+    `cannot retrieve class for invalid (unclassed) type '<invalid>'`. Cause: the
+    `arcadia` **`systemd --user`** service was running **without the `render`
+    (992) and `input` (996) groups** (compare `cat /proc/$(pgrep -f
+    target/debug/arcadia)/status | grep Groups` vs `id`). Without `render` the
+    GStreamer **VA plugin can't open `/dev/dri/renderD128` at load**, so
+    `vah264enc`/`vapostproc` never register → the pipeline can't build → every
+    connect fails. The *same pipeline string runs fine under `gst-launch-1.0` in
+    an interactive shell* (which has the groups) — that contrast is the tell.
+    A long-lived `systemd --user` manager **caches a stale group set** if
+    render/input were granted after it started; `systemctl --user restart arcadia`
+    does **not** refresh it. Fix: `sudo systemctl restart user@$(id -u).service`
+    (or reboot), then restart arcadia. `scripts/run-session.sh` now **preflights**
+    render+input and exits with this remedy instead of looping silently.
+  - **`steam` not on the service PATH (2026-06-11).** `launch failed: spawning
+    'steam' … No such file or directory`: Debian's `steam-installer` puts the
+    binary at **`/usr/games/steam`**, and `/usr/games` is absent from a
+    `systemd --user` service's PATH (present only in interactive login shells).
+    The launcher (`src/launcher.rs` `spawn`) now appends
+    `/usr/local/games:/usr/games` to each game's child PATH.
   - **Cursor (2026-06-11):** the captured X cursor is shown only while the browser
     holds pointer lock — `web/main.js` sends `{t:"c",on}` on `pointerlockchange`
     and `src/pipeline.rs` toggles `ximagesrc cap.show-pointer` live (named element

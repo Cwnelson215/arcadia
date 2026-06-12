@@ -15,6 +15,28 @@
 # foreground so Ctrl-C stops the stream (the game keeps running until /api/stop).
 set -uo pipefail
 
+# Group preflight: arcadia MUST hold `render` (GPU /dev/dri/renderD128) and
+# `input` (/dev/uinput). Without `render`, the GStreamer VA plugin can't open the
+# GPU at load, so `vah264enc`/`vapostproc` never register — the WebRTC pipeline
+# then fails to build on every connect and the browser reconnect-LOOPS (no error
+# in the UI). Without `input`, keyboard/mouse/gamepad injection silently dies.
+# A long-lived `systemd --user` manager carries a STALE group set if these were
+# granted after it started (a plain `systemctl --user restart arcadia` won't fix
+# it). Fail fast with the remedy instead of looping silently.
+missing=""
+for g in render input; do
+  id -nG | tr ' ' '\n' | grep -qx "$g" || missing="${missing} ${g}"
+done
+if [ -n "${missing}" ]; then
+  echo "FATAL: arcadia is missing group(s):${missing}" >&2
+  echo "  These are required for the VA encoder (render) and uinput (input)." >&2
+  echo "  1. Ensure membership:  sudo usermod -aG render,input ${USER}" >&2
+  echo "  2. Refresh the (stale) systemd --user groups WITHOUT a reboot:" >&2
+  echo "        sudo systemctl restart user@$(id -u).service" >&2
+  echo "     then:  systemctl --user restart arcadia   (or just reboot bulbasaur)" >&2
+  exit 1
+fi
+
 DISPLAY_NUM="${DISPLAY_NUM:-:99}"
 # Basename only: a setuid-root Xorg rejects an absolute -config path and searches
 # trusted dirs (/etc/X11, ...). The file lives at /etc/X11/xorg-arcadia.conf.
