@@ -20,14 +20,6 @@
 # Tip: bring a new game up WITHOUT gamescope first to isolate variables, then
 # flip `gamescope = true` once it streams and controls cleanly.
 
-# Smoke test — proves the accelerated display + capture path with a moving,
-# GPU-rendered window. On the accelerated Xorg this should run at the GPU's
-# refresh, not the ~software fps Xvfb gave.
-[[game]]
-id = "glxgears"
-name = "glxgears (test)"
-command = "glxgears"
-
 # Steam Big Picture / gamepad UI. First run needs a one-time interactive Steam
 # login (do it through the stream or a local session). Recommended end state is
 # `gamescope = true`; left false here so it's verified bare first.

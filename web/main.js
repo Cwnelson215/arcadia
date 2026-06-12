@@ -330,11 +330,106 @@ function tapKey(code, ms = 80) {
 
 $("esc").addEventListener("click", () => tapKey("Escape"));
 
+// ---- overlay menu ------------------------------------------------------------
+// All controls (action buttons, game list, stats) live in a translucent overlay
+// that is summoned on demand — double-tap Esc on desktop, long-press on touch —
+// so the default view is just the stream. Opens by default on load so Connect is
+// reachable on the initial black screen.
+
+let programmaticUnlock = false; // set when WE release the lock, so pointerlockchange isn't counted as an Esc
+
+function menuOpen() {
+  return !$("menuBackdrop").classList.contains("hidden");
+}
+function openMenu() {
+  // Release capture so the user can click menu buttons; flag it so the resulting
+  // pointerlockchange isn't miscounted as a physical Esc (see noteEsc()).
+  if (inputActive()) {
+    programmaticUnlock = true;
+    document.exitPointerLock();
+  }
+  $("menuBackdrop").classList.remove("hidden");
+}
+function closeMenu() {
+  $("menuBackdrop").classList.add("hidden");
+}
+function toggleMenu() {
+  menuOpen() ? closeMenu() : openMenu();
+}
+
+$("menuToggle").addEventListener("click", toggleMenu);
+$("close").addEventListener("click", closeMenu);
+// Click on the backdrop (outside the panel) closes; clicks inside don't bubble out.
+$("menuBackdrop").addEventListener("click", (e) => {
+  if (e.target === $("menuBackdrop")) closeMenu();
+});
+
+// Double-tap Esc → toggle the menu. Each PHYSICAL Esc yields exactly one signal:
+// while pointer-locked the browser swallows the Escape keydown but fires
+// pointerlockchange (counted below); while free the keydown fires (counted in the
+// keydown handler). Two signals within 500ms toggle the menu.
+let escCount = 0;
+let escTimer = null;
+function noteEsc() {
+  escCount++;
+  clearTimeout(escTimer);
+  if (escCount >= 2) {
+    escCount = 0;
+    toggleMenu();
+    return;
+  }
+  escTimer = setTimeout(() => {
+    escCount = 0;
+  }, 500);
+}
+
+// Long-press anywhere (touch) → toggle the menu. Safe: touch isn't used for
+// gameplay input (mobile plays via the Gamepad API).
+let pressTimer = null;
+let pressStart = null;
+function cancelPress() {
+  clearTimeout(pressTimer);
+  pressTimer = null;
+}
+document.addEventListener(
+  "touchstart",
+  (e) => {
+    pressStart = e.touches[0];
+    cancelPress();
+    pressTimer = setTimeout(() => {
+      pressTimer = null;
+      toggleMenu();
+    }, 500);
+  },
+  { passive: true }
+);
+document.addEventListener("touchend", cancelPress, { passive: true });
+document.addEventListener(
+  "touchmove",
+  (e) => {
+    if (!pressStart) return;
+    const t = e.touches[0];
+    if (Math.abs(t.clientX - pressStart.clientX) > 10 || Math.abs(t.clientY - pressStart.clientY) > 10) {
+      cancelPress();
+    }
+  },
+  { passive: true }
+);
+
+// Open the menu on load so the Connect button is visible to start.
+openMenu();
+
 document.addEventListener("pointerlockchange", () => {
   const locked = inputActive();
   // Show the captured cursor only while we hold the pointer.
   sendInput({ t: "c", on: locked });
   updateHint();
+  // An unlock the user triggered (physical Esc) counts toward the double-Esc
+  // gesture; one we triggered ourselves (opening the menu) does not.
+  if (!locked) {
+    if (programmaticUnlock) programmaticUnlock = false;
+    else noteEsc();
+  }
 });
 
 document.addEventListener("mousemove", (e) => {
@@ -367,6 +462,13 @@ document.addEventListener(
 );
 
 document.addEventListener("keydown", (e) => {
+  // Esc while free (not captured) feeds the double-tap-Esc menu gesture. While
+  // captured the browser swallows this keydown to release pointer lock, so the
+  // first Esc is counted via pointerlockchange instead.
+  if (e.code === "Escape" && !inputActive()) {
+    noteEsc();
+    return;
+  }
   if (!inputActive()) return;
   e.preventDefault();
   if (e.repeat) return; // hold = one down; the host handles auto-repeat

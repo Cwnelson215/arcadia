@@ -10,8 +10,8 @@
     #wrap { display: flex; flex-direction: column; align-items: center;
             gap: 12px; padding: 16px; }
     h2 { margin: 4px 0; font-weight: 600; }
-    video { background: #000; width: 1280px; max-width: 100%; aspect-ratio: 16 / 9;
-            display: block; }
+    video { background: #000; width: min(1600px, 95vw); max-width: 100%;
+            aspect-ratio: 16 / 9; display: block; }
     /* Fullscreen a wrapper, NOT the <video> — fullscreening the video itself makes
        the browser overlay native media controls (a pause button + a running timer
        in the corner). */
@@ -19,7 +19,8 @@
                         background: #000; width: 100%; height: 100%; }
     #stage:fullscreen video { width: 100%; height: 100%; aspect-ratio: auto;
                               object-fit: contain; }
-    #bar { display: flex; gap: 12px; align-items: center; }
+    #bar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+           justify-content: center; }
     button { padding: 8px 16px; font-size: 14px; cursor: pointer; }
     button:disabled { cursor: default; opacity: 0.5; }
     #hint { color: #9aa; font-size: 13px; }
@@ -30,6 +31,28 @@
     #stats { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
              white-space: pre; background: #1b1b1b; padding: 10px 14px;
              border-radius: 6px; min-width: 320px; }
+    /* Overlay menu — all controls live here, summoned on demand (double-tap Esc
+       on desktop, long-press on touch) so the default view is just the stream. */
+    #menuBackdrop { position: fixed; inset: 0; z-index: 50;
+                    background: rgba(0, 0, 0, 0.45);
+                    display: flex; align-items: center; justify-content: center; }
+    #menuBackdrop.hidden { display: none; }
+    #menu { background: rgba(20, 20, 20, 0.82); backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px); border: 1px solid #333;
+            border-radius: 10px; padding: 18px; display: flex;
+            flex-direction: column; align-items: center; gap: 14px;
+            max-width: 95vw; max-height: 92vh; overflow: auto;
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6); }
+    #menuHead { display: flex; align-items: center; gap: 12px; width: 100%;
+                justify-content: space-between; }
+    #menuHead h2 { margin: 0; }
+    #close { padding: 4px 12px; }
+    /* Faint always-visible affordance to open the menu (the "transparent button"). */
+    #menuToggle { position: fixed; top: 12px; right: 12px; z-index: 40;
+                  opacity: 0.32; background: rgba(20, 20, 20, 0.6); color: #eee;
+                  border: 1px solid #555; border-radius: 8px; padding: 6px 12px;
+                  font-size: 18px; line-height: 1; transition: opacity 0.15s; }
+    #menuToggle:hover { opacity: 0.9; }
     .dot { display: inline-block; width: 10px; height: 10px;
            border-radius: 50%; background: #888; }
     .dot.on { background: #3c3; }
@@ -37,21 +60,29 @@
   </style>
 </head>
 <body>
+  <button id="menuToggle" title="Menu (double-tap Esc or long-press)">☰</button>
   <div id="wrap">
-    <h2>arcadia</h2>
-    <div id="games">loading games…</div>
-    <div id="bar">
-      <button id="connect">Connect</button>
-      <button id="stop">Stop game</button>
-      <button id="fullscreen">Fullscreen</button>
-      <button id="esc" title="Send Esc to the game — Back in Steam Big Picture (the browser eats the real Esc key to release the mouse, so it never reaches the game)">Back (Esc)</button>
-      <span class="dot" id="state"></span>
-      <span id="statetext">idle</span>
-    </div>
     <div id="stage"><video id="video" autoplay playsinline muted disablepictureinpicture></video></div>
-    <div id="hint">click the video to capture mouse + keyboard</div>
-    <div id="stats">no stats yet — click Connect</div>
+    <div id="hint">click the video to capture · double-tap Esc or long-press for the menu</div>
   </div>
-  <script src="main.js?v=5"></script>
+  <div id="menuBackdrop" class="hidden">
+    <div id="menu">
+      <div id="menuHead">
+        <h2>arcadia</h2>
+        <button id="close" title="Close menu">✕</button>
+      </div>
+      <div id="bar">
+        <button id="connect">Connect</button>
+        <button id="stop">Stop game</button>
+        <button id="fullscreen">Fullscreen</button>
+        <button id="esc" title="Send Esc to the game — Back in Steam Big Picture (the browser eats the real Esc key to release the mouse, so it never reaches the game)">Back (Esc)</button>
+        <span class="dot" id="state"></span>
+        <span id="statetext">idle</span>
+      </div>
+      <div id="games">loading games…</div>
+      <div id="stats">no stats yet — click Connect</div>
+    </div>
+  </div>
+  <script src="main.js?v=6"></script>
 </body>
 </html>
