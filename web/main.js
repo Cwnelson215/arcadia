@@ -293,7 +293,7 @@ function updateHint() {
   const hint = $("hint");
   hint.className = locked ? "locked" : "";
   hint.textContent = locked
-    ? "captured — press Esc to release"
+    ? "captured — Esc releases the mouse · use “Back (Esc)” / “Steam ▾” above to send those to the game"
     : "click the video to capture mouse + keyboard";
 }
 
@@ -309,6 +309,32 @@ $("fullscreen").addEventListener("click", async () => {
     else await document.exitFullscreen();
   } catch (e) {}
 });
+
+// On-screen controls for inputs the browser otherwise swallows. The browser
+// consumes the physical Esc key to release pointer lock, so it never reaches the
+// game — and there's no keyboard chord for the Big Picture menu. These buttons
+// inject SYNTHETIC events over the input data channel (server-side uinput), which
+// the browser never sees, so they work over plain HTTP without the Keyboard Lock
+// API. Click them with the mouse free (i.e. after Esc has released the capture).
+
+// Tap a key: down now, up shortly after (the host treats a hold as one down).
+function tapKey(code, ms = 80) {
+  sendInput({ t: "k", code, down: true });
+  setTimeout(() => sendInput({ t: "k", code, down: false }), ms);
+}
+
+// Tap one W3C-standard gamepad button index on the virtual pad (the host creates
+// the uinput controller lazily on first gamepad event). Index 16 = Guide/Steam,
+// which opens the Big Picture menu.
+function tapGamepadButton(index, ms = 120) {
+  const press = Array.from({ length: 17 }, (_, i) => (i === index ? 1 : 0));
+  const release = new Array(17).fill(0);
+  sendInput({ t: "g", a: [0, 0, 0, 0], b: press });
+  setTimeout(() => sendInput({ t: "g", a: [0, 0, 0, 0], b: release }), ms);
+}
+
+$("esc").addEventListener("click", () => tapKey("Escape"));
+$("steam").addEventListener("click", () => tapGamepadButton(16));
 
 document.addEventListener("pointerlockchange", () => {
   const locked = inputActive();

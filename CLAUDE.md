@@ -187,6 +187,17 @@ Steam (Big Picture, logged in) both stream and take keyboard/mouse/gamepad input
     `sudo tailscale serve --bg 8080`, and load `https://bulbasaur.tail71e22f.ts.net/`.
     `web/index.html` loads `main.js?v=N` — **bump N when changing the client** to
     dodge browser caching (a stale cached client caused an hour of "input dead").
+  - **On-screen Back/Steam buttons (2026-06-11) — the HTTP-friendly substitute.**
+    Because the browser eats physical Esc (above), there was no way to send Back or
+    open the Big Picture menu while playing Steam. Fix that does *not* need HTTPS:
+    toolbar buttons in `web/index.html` (`#esc`, `#steam`) that inject **synthetic**
+    events over the existing input data channel (so the browser never sees them).
+    `web/main.js` `tapKey("Escape")` → `{t:"k"}` → uinput `KEY_ESC` (Big Picture
+    "Back"); `tapGamepadButton(16)` → `{t:"g"}` with W3C button 16 → uinput
+    `BTN_MODE` (Guide → opens the Steam menu; creates the virtual pad lazily, so a
+    phantom controller appears in Steam — harmless). Click them with the mouse free
+    (after Esc has released the capture). This is independent of, and does not
+    replace, the deferred *physical*-Esc passthrough above.
   - **Browser quirk:** fullscreen targets a wrapper `<div id="stage">`, **not** the
     `<video>`. Fullscreening the `<video>` element makes Chrome overlay native
     media controls (a pause button + running timer in the corner) — which looks
